@@ -14,6 +14,7 @@ import { place } from './place'
 import { optimizeGeometry } from './optimize'
 import { emit } from './emit'
 import { planAxidraw, type PlotPlan } from './plan'
+import type { Affine } from '../wasm/registration'
 import { planGrblTape, type GrblTape } from './grblTape'
 import { plotStartInPage } from './toMachine'
 import { clipToRegion, drawableRegion } from './clip'
@@ -125,13 +126,25 @@ export type PipelineOutput =
   | { kind: 'grbl'; tape: GrblTape; optimized: Geometry }
   | { kind: 'hpgl'; tape: GrblTape; optimized: Geometry }
 
-/** Full run: plottable geometry → optimize → the machine-kind output (emit / plan). */
+/** Full run: plottable geometry → optimize → the machine-kind output (emit / plan). `map` is
+ *  the optional registration (page → machine mm); only HP-GL uses it. */
 export async function runPipeline(
   elements: DocElement[],
   profile: MachineProfile,
   fiducial?: Fiducial | null,
+  map?: Affine | null,
 ): Promise<PipelineOutput> {
-  const plottable = buildPlottableGeometry(elements, profile)
+  return runPipelineGeometry(buildPlottableGeometry(elements, profile), profile, fiducial, map)
+}
+
+/** `runPipeline` from the optimize stage on, for geometry that is already plottable (page mm,
+ *  clipped) — e.g. a hand-built test cut. */
+export async function runPipelineGeometry(
+  plottable: Geometry,
+  profile: MachineProfile,
+  fiducial?: Fiducial | null,
+  map?: Affine | null,
+): Promise<PipelineOutput> {
   const penOrder = profile.pens.map((p) => p.id)
   const optimized = await optimizeGeometry(plottable, plotStartInPage(profile, fiducial), penOrder)
   if (profile.kind === 'axidraw') {
@@ -141,7 +154,7 @@ export async function runPipeline(
     return { kind: 'grbl', tape: planGrblTape(optimized, profile, fiducial), optimized }
   }
   if (profile.kind === 'hpgl') {
-    return { kind: 'hpgl', tape: planGrblTape(optimized, profile, fiducial, Infinity), optimized }
+    return { kind: 'hpgl', tape: planGrblTape(optimized, profile, fiducial, Infinity, map), optimized }
   }
   return { kind: 'gcode', gcode: emit(optimized, profile, fiducial) }
 }

@@ -2,6 +2,8 @@
 // is explicit. Page space is screen-like (origin top-left, +Y down). The machine may put (0,0)
 // at the bottom-left (+Y up), which needs a Y-flip. No clamping here — geometry is clipped to
 // the drawable region upstream (see clip.ts), and the pen-offset is applied in emit.
+import { applyAffine } from '../registration'
+import type { Affine } from '../wasm/registration'
 import { penOffsetOf, type Fiducial, type MachineProfile, type Point } from '../types'
 
 /** Where the PEN sits after homing, in page space — used to seed stroke ordering and the
@@ -24,7 +26,10 @@ export function plotStartInPage(profile: MachineProfile, fiducial?: Fiducial | n
   return fiducial ?? penParkInPage(profile)
 }
 
-export function toMachine(p: Point, profile: MachineProfile): Point {
+/** With a registration `map` (page mm → machine mm, already containing any Y-flip) it replaces
+ *  the origin flip; the pressure is carried over. */
+export function toMachine(p: Point, profile: MachineProfile, map?: Affine | null): Point {
+  if (map) return { ...applyAffine(map, p), pressure: p.pressure }
   const y = profile.origin === 'bottom-left' ? profile.bed.height - p.y : p.y
   return { x: p.x, y, pressure: p.pressure }
 }

@@ -15,13 +15,16 @@
 //
 // Coordinates are MACHINE mm (page → machine via toMachine, Y-flip per origin), so the renderer
 // emits them verbatim; distances are flip-invariant, so `dist` still matches the page-space
-// preview toolpath. Work zero (0,0) is the job's origin — the session establishes it with
+// preview toolpath. An optional registration `map` (HP-GL cutters, page mm → machine mm) replaces
+// the flip; under rotation + <= 2 % scaling distances are practically preserved, so the `dist`
+// drift against the preview is negligible. The final walk home stays at raw machine (0,0). Work zero (0,0) is the job's origin — the session establishes it with
 // `G10 L20` (or `$H`), and the tape both starts and ends there.
 //
 // Moves longer than MAX_SEG_MM are split: with character-counting flow control the RX buffer plus
 // GRBL's planner queue hold ~25 lines of committed motion, so bounding each line's length bounds
 // how long pause/cancel take to bite.
 import type { Fiducial, Geometry, GrblProfile, HpglProfile } from '../types'
+import type { Affine } from '../wasm/registration'
 import { toMachine } from './toMachine'
 import { SEG } from './planTypes'
 
@@ -66,6 +69,7 @@ export function planGrblTape(
   profile: GrblProfile | HpglProfile,
   fiducial?: Fiducial | null,
   maxSegMm = MAX_SEG_MM,
+  map?: Affine | null,
 ): GrblTape {
   const strokes = geom.filter((s) => s.points.length > 0)
   const b: TapeBuilder = {
@@ -124,7 +128,7 @@ export function planGrblTape(
   push(SEG.penUp, cur.x, cur.y, 0, 0, 0, 0)
 
   if (fiducial && strokes.length > 0) {
-    const f = toMachine(fiducial, profile)
+    const f = toMachine(fiducial, profile, map)
     move(f, { penDown: 0 })
     push(SEG.pauseFiducial, cur.x, cur.y, 0, 0, 0, 0)
   }
@@ -136,7 +140,7 @@ export function planGrblTape(
       // Pen is up (every stroke ends with penUp); the swap happens wherever the last stroke ended.
       push(SEG.pausePenswap, cur.x, cur.y, 0, 0, 0, 0)
     }
-    const pts = s.points.map((p) => toMachine(p, profile))
+    const pts = s.points.map((p) => toMachine(p, profile, map))
     const p0 = s.points[0].pressure ?? 1
     move(pts[0], { penDown: 0, blockStart: true })
     push(SEG.penDown, cur.x, cur.y, p0, 1, 0, 0)

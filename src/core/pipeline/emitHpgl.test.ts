@@ -23,6 +23,13 @@ const stroke = (pts: [number, number][], pen = 0): Geometry[number] => ({
 })
 
 describe('emitHpgl', () => {
+  it('HP-GL tape goes through the map, and still walks home to (0,0)', () => {
+    const p = profile()
+    const tape = planGrblTape([stroke([[0, 0], [10, 0]])], p, null, Infinity, [1, 0, 100, 0, 1, 50])
+    expect(emitHpgl(tape, p)).toContain('PD4400,2000;')
+    expect(emitHpgl(tape, p).trim().endsWith('PU0,0;')).toBe(true)
+  })
+
   it('emits plotter units (40/mm), y-up from a bottom-left origin, and walks home', () => {
     const p = profile()
     const out = emitHpgl(planGrblTape([stroke([[10, 90], [20, 90.0125]])], p, null, Infinity), p)

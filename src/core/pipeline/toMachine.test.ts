@@ -9,6 +9,11 @@ function prusa(over: Partial<PrusaProfile> = {}): PrusaProfile {
 }
 
 describe('toMachine', () => {
+  it('uses the registration map instead of the origin flip', () => {
+    const p = toMachine({ x: 10, y: 20 }, prusa(), [0, 1, 5, 1, 0, 7])
+    expect(p).toEqual({ x: 25, y: 17, pressure: undefined })
+  })
+
   it('is the identity for a top-left origin', () => {
     const p = prusa({ origin: 'top-left' })
     expect(toMachine({ x: 10, y: 20, pressure: 0.5 }, p)).toEqual({ x: 10, y: 20, pressure: 0.5 })
