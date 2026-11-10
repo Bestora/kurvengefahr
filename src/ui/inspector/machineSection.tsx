@@ -729,7 +729,10 @@ function GoToFiducial({ profile }: { profile: HpglProfile }) {
     const link = currentHpgl()
     if (!link) return
     // Rebuilt per click: the link and profile can change between connections.
-    if (!fiducialHold || !away) fiducialHold = new HeadHold(link, profile, null)
+    if (!fiducialHold || !away) {
+      fiducialHold?.stop()
+      fiducialHold = new HeadHold(link, profile, null)
+    }
     const hold = fiducialHold
     try {
       if (away) {

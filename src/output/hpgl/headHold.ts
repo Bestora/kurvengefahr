@@ -11,6 +11,8 @@ export class SoftLimitError extends Error {}
 export class HeadHold {
   private timer: ReturnType<typeof setInterval> | undefined
   private held: Pt | null = null
+  /** Bumped by every moveTo/home/stop: an in-flight moveTo only arms the hold if still latest. */
+  private op = 0
 
   /** `maxMm` = carriage-axis soft limit in machine mm, or null for none. */
   constructor(
@@ -31,13 +33,16 @@ export class HeadHold {
     }
     const cmd = hpglHoldCommand(p.x, p.y)
     const first = this.held === null
+    const op = ++this.op
     clearInterval(this.timer)
     try {
       await this.link.write(first ? hpglInitCommands(this.profile).join('') + 'PU;' + cmd : cmd)
     } catch (e) {
-      this.stop()
+      if (op === this.op) this.stop()
       throw e
     }
+    if (op !== this.op) return // superseded by a later moveTo/home/stop
+    clearInterval(this.timer)
     this.held = p
     this.timer = setInterval(() => this.link.write(cmd).catch(() => this.stop()), HPGL_HOLD_MS)
   }
@@ -49,6 +54,7 @@ export class HeadHold {
 
   /** Stop holding without sending anything (the link is gone). */
   stop(): void {
+    this.op++
     clearInterval(this.timer)
     this.timer = undefined
     this.held = null

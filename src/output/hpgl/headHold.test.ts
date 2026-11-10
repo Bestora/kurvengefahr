@@ -59,4 +59,25 @@ describe('HeadHold', () => {
     await vi.advanceTimersByTimeAsync(2000)
     expect(sent.length).toBe(n)
   })
+
+  it('overlapping moves leave exactly one hold, at the second target', async () => {
+    const sent: string[] = []
+    const hold = new HeadHold({ write: async (d) => { await Promise.resolve(); sent.push(d) } }, profile, null)
+    await Promise.all([hold.moveTo({ x: 1, y: 1 }), hold.moveTo({ x: 2, y: 2 })])
+    sent.length = 0
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(sent).toEqual(['PU80,80;', 'PU80,80;'])
+    expect(hold.at).toEqual({ x: 2, y: 2 })
+  })
+
+  it('home during an in-flight move wins', async () => {
+    const sent: string[] = []
+    const hold = new HeadHold({ write: async (d) => { await Promise.resolve(); sent.push(d) } }, profile, null)
+    const move = hold.moveTo({ x: 1, y: 1 })
+    await hold.home()
+    await move
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(sent.at(-1)).toBe('PU;PU0,0;')
+    expect(hold.at).toBeNull()
+  })
 })
