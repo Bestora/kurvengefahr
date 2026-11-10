@@ -29,7 +29,7 @@ import { downloadJson, pickJsonFile } from '../../output/download'
 import type { AxidrawProfile, GrblProfile, HpglProfile, Pen, PrusaProfile } from '../../core/types'
 import { pressureEnabled } from '../../core/types'
 import { grblPenLines, newEmitCtx } from '../../core/pipeline/emitGrbl'
-import { HPGL_HOLD_MS, hpglHoldCommand, hpglInitCommands } from '../../core/pipeline/emitHpgl'
+import { HeadHold } from '../../output/hpgl/headHold'
 import { toMachine } from '../../core/pipeline/toMachine'
 import { validateProfile } from '../../core/profileValidation'
 import {
@@ -715,15 +715,9 @@ function HpglMachineSection({ profile }: { profile: HpglProfile }) {
 }
 
 /** Travel the head (pen up) to the fiducial and back, to check its position on the medium
- *  without plotting. The cutter would read the silence after the move as the end of the job and
- *  drive home, so the hold command repeats there until the head is sent back (or the port goes).
- *  Module state, so the hold survives the inspector unmounting. */
-let fiducialHold: ReturnType<typeof setInterval> | undefined
-
-function stopFiducialHold() {
-  clearInterval(fiducialHold)
-  fiducialHold = undefined
-}
+ *  without plotting. `HeadHold` repeats the hold command there so the cutter doesn't read the
+ *  silence as the end of the job. Module state, so the hold survives the inspector unmounting. */
+let fiducialHold: HeadHold | undefined
 
 function GoToFiducial({ profile }: { profile: HpglProfile }) {
   const connected = useSerial((s) => s.connected)
@@ -734,25 +728,19 @@ function GoToFiducial({ profile }: { profile: HpglProfile }) {
   const toggle = async () => {
     const link = currentHpgl()
     if (!link) return
+    // Rebuilt per click: the link and profile can change between connections.
+    if (!fiducialHold || !away) fiducialHold = new HeadHold(link, profile, null)
+    const hold = fiducialHold
     try {
       if (away) {
-        stopFiducialHold()
-        await link.write('PU;PU0,0;')
+        await hold.home()
         useSerial.getState().setHeadAway(false)
       } else if (fiducial) {
-        const at = toMachine(fiducial, profile)
-        const hold = hpglHoldCommand(at.x, at.y)
-        await link.write(hpglInitCommands(profile).join('') + 'PU;' + hold)
+        await hold.moveTo(toMachine(fiducial, profile))
         useSerial.getState().setHeadAway(true)
-        stopFiducialHold()
-        fiducialHold = setInterval(() => {
-          const live = currentHpgl()
-          if (!live || !useSerial.getState().headAway) stopFiducialHold()
-          else live.write(hold).catch(stopFiducialHold)
-        }, HPGL_HOLD_MS)
       }
     } catch (e) {
-      stopFiducialHold()
+      hold.stop()
       toast.error(`Couldn't reach the plotter: ${e instanceof Error ? e.message : String(e)}`)
     }
   }

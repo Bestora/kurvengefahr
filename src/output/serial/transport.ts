@@ -8,7 +8,8 @@ export interface LineTransport {
   write(data: string): Promise<void>
   /** Register the single line consumer. Lines are delivered CR/LF-stripped, non-empty. */
   onLine(cb: (line: string) => void): void
-  /** Register the disconnect consumer (unplug, or a fatal read/write error). Fires once. */
+  /** Register a disconnect consumer (unplug, or a fatal read/write error); several may be
+   *  registered. Each fires once. */
   onDisconnect(cb: () => void): void
   close(): Promise<void>
 }
@@ -28,7 +29,7 @@ export class WebSerialTransport implements LineTransport {
   private encoder = new TextEncoder()
   private lineCb: (line: string) => void = () => {}
   private flowCb: (xon: boolean) => void = () => {}
-  private disconnectCb: () => void = () => {}
+  private disconnectCbs: (() => void)[] = []
   private disconnected = false
   private closing = false
 
@@ -85,7 +86,7 @@ export class WebSerialTransport implements LineTransport {
   private fireDisconnect(): void {
     if (this.disconnected) return
     this.disconnected = true
-    this.disconnectCb()
+    for (const cb of this.disconnectCbs) cb()
   }
 
   async write(data: string): Promise<void> {
@@ -98,7 +99,7 @@ export class WebSerialTransport implements LineTransport {
   }
 
   onDisconnect(cb: () => void): void {
-    this.disconnectCb = cb
+    this.disconnectCbs.push(cb)
   }
 
   /** Register the XON (true) / XOFF (false) consumer — software flow control from the device. */
