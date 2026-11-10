@@ -13,6 +13,7 @@ import { Num } from './controls'
 
 const STEPS = [1, 5, 20]
 const NEEDS_PORT = 'Connect the cutter first'
+const NEEDS_URL = 'Enter the camera URL first'
 
 export function CameraRegistrationSection() {
   const rig = useCameraRig()
@@ -24,25 +25,35 @@ export function CameraRegistrationSection() {
 
   const busy = reg.phase === 'busy'
   const free = idle && !busy
-  const act = free && connected
-  const portTitle = (t: string) => (connected ? t : NEEDS_PORT)
+  const act = free && connected && !!rig.url
+  const portTitle = (t: string) => (!connected ? NEEDS_PORT : !rig.url ? NEEDS_URL : t)
+  const [urlDraft, setUrlDraft] = useState<string | null>(null)
+  const commitUrl = () => {
+    if (urlDraft !== null) rig.patch({ url: urlDraft.trim() })
+    setUrlDraft(null)
+  }
   const marks = rig.marks
   const setMark = (k: keyof MarkLayout, axis: 'x' | 'y', v: number) =>
     rig.patch({ marks: { ...marks, [k]: { ...marks[k], [axis]: v } } })
-  const strain = reg.phase === 'ready' && reg.affine ? affineStrain(reg.affine) : null
+  const strain = reg.affine ? affineStrain(reg.affine) : null
   const mmPerPx = rig.cam ? Math.sqrt(Math.abs(rig.cam.m[0] * rig.cam.m[3] - rig.cam.m[1] * rig.cam.m[2])) : null
   const stale = !!rig.cam && !!frameSize && (rig.cam.w !== frameSize.w || rig.cam.h !== frameSize.h)
 
-  const jogBtn = (glyph: string, axis: 'X' | 'Y', sign: 1 | -1) => (
-    <IconButton
-      aria-label={`Jog ${sign > 0 ? '+' : '-'}${axis}`}
-      title={act ? `Jog ${sign > 0 ? '+' : '-'}${axis} (${step} mm)` : NEEDS_PORT}
-      disabled={!act}
-      onClick={() => void reg.jog(axis === 'X' ? sign * step : 0, axis === 'Y' ? sign * step : 0)}
-    >
-      {glyph}
-    </IconButton>
-  )
+  // Y runs along the carriage: +Y moves the head left. X is the feed axis.
+  const jogBtn = (glyph: string, axis: 'X' | 'Y', sign: 1 | -1) => {
+    const dir = axis === 'Y' ? (sign > 0 ? 'head left' : 'head right') : 'feed'
+    const label = `Jog ${sign > 0 ? '+' : '-'}${axis}`
+    return (
+      <IconButton
+        aria-label={label}
+        title={act ? `${label} - ${dir} (${step} mm)` : portTitle('')}
+        disabled={!act}
+        onClick={() => void reg.jog(axis === 'X' ? sign * step : 0, axis === 'Y' ? sign * step : 0)}
+      >
+        {glyph}
+      </IconButton>
+    )
+  }
 
   return (
     <>
@@ -53,9 +64,11 @@ export function CameraRegistrationSection() {
       <Field label="Camera URL">
         <input
           className={controlClass}
-          value={rig.url}
+          value={urlDraft ?? rig.url}
           placeholder="http://<ip>/capture"
-          onChange={(e) => rig.patch({ url: e.target.value.trim() })}
+          onChange={(e) => setUrlDraft(e.target.value)}
+          onBlur={commitUrl}
+          onKeyDown={(e) => e.key === 'Enter' && commitUrl()}
         />
       </Field>
       {reg.frameUrl && (
@@ -75,10 +88,10 @@ export function CameraRegistrationSection() {
       </Button>
 
       <div className="mt-2 flex items-center gap-1">
-        {jogBtn('←', 'X', -1)}
-        {jogBtn('→', 'X', 1)}
-        {jogBtn('↑', 'Y', -1)}
-        {jogBtn('↓', 'Y', 1)}
+        {jogBtn('←', 'Y', 1)}
+        {jogBtn('→', 'Y', -1)}
+        {jogBtn('↑', 'X', 1)}
+        {jogBtn('↓', 'X', -1)}
         <select
           className={controlClass}
           aria-label="Jog step"
@@ -111,7 +124,7 @@ export function CameraRegistrationSection() {
           Measure sheet
         </Button>
         {busy && <Button onClick={reg.cancel}>Cancel</Button>}
-        {reg.phase === 'ready' && (
+        {reg.affine !== null && (
           <Button disabled={!act} title={portTitle('Cut a small square on the square mark')} onClick={() => void usePlotSession.getState().startTestCut()}>
             Test cut
           </Button>
@@ -136,10 +149,11 @@ export function CameraRegistrationSection() {
       <Num label="Knife offset Y (mm)" value={rig.knifeOffset.y} step={0.1}
         onChange={(v) => rig.patch({ knifeOffset: { ...rig.knifeOffset, y: v } })} />
       <p className="text-xs text-muted">
-        Added to every cut. If the test cut&apos;s white rim is wider on one side, enter half the difference here.
+        Uses the jog axes: a positive X or Y shifts the cut the way the Jog +X / +Y button moves the head. If the
+        test cut&apos;s white rim is wider on one side, shift the cut towards that side by half the difference.
       </p>
       <Num label="Soft limit (mm)" title="Furthest the head may travel along the carriage with the camera fitted."
-        value={rig.softLimitMm} step={1} onChange={(v) => rig.patch({ softLimitMm: v })} />
+        value={rig.softLimitMm} step={0.25} onChange={(v) => v > 0 && rig.patch({ softLimitMm: v })} />
 
       <Disclosure label="Mark layout">
         {(['square', 'topRight', 'bottomLeft'] as const).map((k) => (

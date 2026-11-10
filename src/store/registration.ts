@@ -170,7 +170,7 @@ export const useRegistration = create<RegistrationStore>((set, get) => {
           useCameraRig.getState().patch({ lastMarks: r.marks, lastAffine: r.affine })
           set({ affine: r.affine, warning: r.warning })
           const s = affineStrain(r.affine)
-          return `Sheet measured: rotated ${s.rotDeg.toFixed(2)} deg, scale ${s.sx.toFixed(4)} x ${s.sy.toFixed(4)}.`
+          return `Sheet measured: rotated ${s.rotDeg.toFixed(2)} deg, scale ${s.sx.toFixed(4)} x ${s.sy.toFixed(4)}. Swap the camera for the knife, then cut.`
         } finally {
           // The operator swaps camera for knife at the origin; home also unblocks plotting.
           await goHome()

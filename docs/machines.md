@@ -125,7 +125,7 @@ software, or stream it live over Web Serial.
 A small ESP32-CAM clamped in the tool holder can find three printed registration marks
 (Silhouette-style: a square and two L-shaped corners) on a sheet, so the cutter cuts a printed
 design in the right place even when the sheet is shifted, rotated, or slightly skewed. It works
-with live streaming only; the `.plt` download is not registered.
+with live streaming only.
 
 **Requirements**
 
@@ -140,9 +140,9 @@ with live streaming only; the `.plt` download is not registered.
    moves and to cut jobs, and only while a camera URL is set.
 3. Before the first search, check the carriage direction: *Jog* +Y must move the head left.
 4. Put the square mark under the camera and press *Calibrate camera*.
-5. Run a test cut (available once a sheet is measured). It cuts a 7.99 mm square 1 mm around the
-   square mark. Measure the white rim left around the cut; the knife offset X and Y are half the
-   difference between opposite sides. Enter them as *Knife offset X/Y*.
+
+With a camera URL set, every live HP-GL cut is refused until the sheet is measured. Clear the URL
+for plain plotting. Recalibrate after changing the camera resolution.
 
 **Per sheet**
 
@@ -151,7 +151,12 @@ with live streaming only; the `.plt` download is not registered.
 2. Load the printed sheet and press *Measure sheet*. The head searches for the three marks, centers
    on each, and measures it. The first sheet scans the carriage; later sheets start where the marks
    were last time. To start from a different spot, jog onto a mark first.
-3. Swap the camera for the knife at the origin and cut.
+3. Optional, once after setup: run a *Test cut* (it needs a measured sheet). It cuts a 7.99 mm
+   square 1 mm around the square mark. Measure the white rim left around the cut. Knife offset X
+   and Y use the jog axes: a positive value shifts the cut the way the *Jog* +X / +Y button moves
+   the head. If the rim is wider on one side, shift the cut towards that side by half the
+   difference.
+4. Swap the camera for the knife at the origin and cut.
 
 Each registration is used by exactly one cut job, so measure again for the next sheet. Test cuts
 do not use it up.

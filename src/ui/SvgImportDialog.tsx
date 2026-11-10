@@ -135,7 +135,7 @@ export function SvgImportDialog() {
       {scaleMode === 'actual' && physical && (
         <p className="text-xs text-muted">Physical units detected — imported 1:1.</p>
       )}
-      {scaleMode === 'actual' && (
+      {scaleMode === 'actual' && physical && (
         <Check
           label="Keep original position"
           checked={opts.keepPosition}

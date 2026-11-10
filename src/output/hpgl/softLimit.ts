@@ -7,11 +7,11 @@ import type { Pt } from '../../core/wasm/registration'
 export const CARRIAGE_AXIS: 'x' | 'y' = 'y'
 
 export function beyondSoftLimit(p: Pt, maxMm: number): boolean {
-  return p[CARRIAGE_AXIS] > maxMm
+  return !(p[CARRIAGE_AXIS] <= maxMm) // fail closed: NaN refuses
 }
 
 export function tapeBeyondSoftLimit(tape: GrblTape, maxMm: number): boolean {
   const axis = tape[CARRIAGE_AXIS]
-  for (let i = 0; i < tape.length; i++) if (axis[i] > maxMm) return true
+  for (let i = 0; i < tape.length; i++) if (!(axis[i] <= maxMm)) return true
   return false
 }
