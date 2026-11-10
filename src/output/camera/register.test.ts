@@ -220,6 +220,16 @@ describe('registerSheet', () => {
     expect(moves.length).toBeLessThanOrEqual(9)
   })
 
+  it('starts from the jogged mark when the last positions are stale', async () => {
+    const { truth, marks } = SKEWED
+    const shift = (p: Pt) => ({ x: p.x, y: p.y + 80 })
+    const lastMarks = { square: shift(truth.square), topRight: shift(truth.topRight), bottomLeft: shift(truth.bottomLeft) }
+    const status: string[] = []
+    const { io } = fakeIO(world(marks, { head: { x: truth.topRight.x + 3, y: truth.topRight.y - 4 } }))
+    expectRegistered(await registerSheet(io, rig({ lastMarks }), (m) => status.push(m)), truth)
+    expect(status).not.toContain('Searching for the first mark…')
+  })
+
   it('never moves beyond the soft limit', async () => {
     const limit = 460
     const { truth, marks } = sheet(placed(-0.8, false, { x: 10, y: 180 }))
@@ -246,6 +256,15 @@ describe('registerSheet', () => {
       'Calibrate the camera first',
     )
   })
+
+  it('refuses an implausible stored calibration without moving', async () => {
+    const { io, moves } = fakeIO(world(SKEWED.marks))
+    const coarse: CamMatrix = [J[0] * 50, J[1] * 50, J[2] * 50, J[3] * 50] // ~5 mm/px
+    await expect(registerSheet(io, rig({ cam: { ...cam, m: coarse } }), () => {})).rejects.toThrow(
+      'Calibrate the camera first',
+    )
+    expect(moves).toHaveLength(0)
+  })
 })
 
 describe('calibrateCamera', () => {
@@ -254,5 +273,23 @@ describe('calibrateCamera', () => {
     const cal = await calibrateCamera(io, { x: 40, y: 60 })
     expect([cal.w, cal.h]).toEqual([400, 300])
     cal.m.forEach((v, i) => expect(Math.abs(v - J[i])).toBeLessThan(1e-6))
+  })
+
+  it('rejects a calibration where the square does not move', async () => {
+    // Camera not on the head: the probes leave the image unchanged up to centroid jitter.
+    const { io } = fakeIO(world([{ kind: 'square', at: { x: 1, y: 2 } }]))
+    io.moveTo = async () => {}
+    const jitter = [
+      [0, 0],
+      [0.05, -0.03],
+      [-0.02, 0.06],
+    ]
+    const detect = io.detect
+    let n = 0
+    io.detect = (f, s) => {
+      const [jx, jy] = jitter[n++]
+      return detect(f, s).map((m) => ({ ...m, x: m.x + jx, y: m.y + jy }))
+    }
+    await expect(calibrateCamera(io, { x: 0, y: 0 })).rejects.toThrow(/camera on the head/)
   })
 })

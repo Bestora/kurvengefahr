@@ -34,6 +34,8 @@ const SEARCH_ROWS = 4
 const DIST_TOL = 0.02
 /** Probe move for the camera calibration. */
 const PROBE_MM = 3
+/** Plausible camera scale. Outside it the search step is metres or microns - a failed calibration. */
+export const MM_PER_PX_RANGE = [0.01, 0.3] as const
 
 export class RegistrationError extends Error {}
 /** Nothing of the wanted kind around the guess - a search moves on to its next candidate. */
@@ -62,6 +64,10 @@ const fmt = (p: Pt) => `(${p.x.toFixed(1)}, ${p.y.toFixed(1)})`
 const onAxes = (carriage: number, feed: number): Pt =>
   CARRIAGE_AXIS === 'y' ? { x: feed, y: carriage } : { x: carriage, y: feed }
 const mmPerPx = (m: CamMatrix) => Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2]))
+export function plausibleCam(cam: CamCal): boolean {
+  const s = mmPerPx(cam.m)
+  return s >= MM_PER_PX_RANGE[0] && s <= MM_PER_PX_RANGE[1]
+}
 const stepMm = (cam: CamCal) => STEP_OF_VIEW * Math.min(cam.w, cam.h) * mmPerPx(cam.m)
 const reachable = (p: Pt, limitMm: number) => p.x >= 0 && p.y >= 0 && !beyondSoftLimit(p, limitMm)
 
@@ -155,8 +161,11 @@ export async function registerSheet(
   onStatus: (msg: string) => void,
 ): Promise<SheetResult> {
   const { cam, lastMarks, marks: page } = rig
-  // A singular matrix (hand-edited storage) would make the search step 0.
-  if (!cam || mmPerPx(cam.m) === 0) throw new RegistrationError('Calibrate the camera first')
+  if (!cam || !plausibleCam(cam)) throw new RegistrationError('Calibrate the camera first')
+  // Manual start: a mark the operator jogged into view is the first mark of a search. Looked at
+  // before the fast path moves the head away.
+  const held = io.at()
+  const jogged = held ? markIn(io, cam, await settle(io, 0), held, null) : null
   let found: MarkLayout | null = null
   if (lastMarks) {
     // Fast path: the next sheet usually lies where the last one did.
@@ -174,7 +183,7 @@ export async function registerSheet(
       if (!(e instanceof RegistrationError)) throw e
     }
   }
-  found ??= await search(io, cam, rig, onStatus)
+  found ??= await search(io, cam, rig, jogged, onStatus)
   const affine = solveAffine(
     [page.square, page.topRight, page.bottomLeft],
     [found.square, found.topRight, found.bottomLeft],
@@ -185,12 +194,15 @@ export async function registerSheet(
   return { affine, marks: found, warning }
 }
 
-/** Cold path: a first mark (under the camera, else by row scan), then its two partners. */
-async function search(io: RigIO, cam: CamCal, rig: CameraRig, onStatus: (msg: string) => void): Promise<MarkLayout> {
+/** Cold path: a first mark (`first`, else by row scan), then its two partners. */
+async function search(
+  io: RigIO,
+  cam: CamCal,
+  rig: CameraRig,
+  first: Seen | null,
+  onStatus: (msg: string) => void,
+): Promise<MarkLayout> {
   const { marks: page, softLimitMm: lim } = rig
-  // Manual start: a mark the operator jogged into view is the first mark.
-  const held = io.at()
-  let first = held ? markIn(io, cam, await settle(io, 0), held, null) : null
   if (!first) {
     onStatus('Searching for the first mark…')
     const s = stepMm(cam)
@@ -270,6 +282,9 @@ export async function calibrateCamera(io: RigIO, start: Pt): Promise<CamCal> {
   const b = await shot(dx)
   const c = await shot(dy)
   const m = fitCamera([sub(a.sq, b.sq), sub(a.sq, c.sq)], [dx, dy])
-  if (!m) throw new RegistrationError('The square did not move in the image - is the camera on the head?')
-  return { m, w: a.f.width, h: a.f.height }
+  const cal = m && { m, w: a.f.width, h: a.f.height }
+  if (!cal || !plausibleCam(cal)) {
+    throw new RegistrationError('The square did not move in the image - is the camera on the head?')
+  }
+  return cal
 }
