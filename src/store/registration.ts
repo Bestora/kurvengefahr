@@ -1,6 +1,7 @@
 // Camera registration at runtime: runs the registration flow (`output/camera/register.ts`) against
-// the real rig - the HP-GL head through one module-level `HeadHold`, frames over HTTP, marks via
-// WASM - and keeps the measured page -> machine affine until one cutting job consumes it. Rig
+// the real rig - the HP-GL head through the one `HeadHold` per port (shared with the machine tab's
+// Go-to-fiducial, so two holds never fight over the head), frames over HTTP, marks via WASM - and
+// keeps the measured page -> machine affine until one cutting job consumes it. Rig
 // settings (URL, calibration, soft limit, last marks) live in `cameraRig`; this store is never
 // persisted. Every head move sets `headAway`, which locks plotting until the head is home again;
 // the plot session also refuses while a run is busy, and these actions refuse while it plots.
@@ -54,17 +55,19 @@ export function cutMap(
 const ORIGIN: Pt = { x: 0, y: 0 }
 let hold: HeadHold | null = null
 let holdLink: WebSerialTransport | null = null
-let holdLimit = 0
+let holdLimit: number | null = null
 /** The running action's; replaced per action. */
 let abort = new AbortController()
 
-/** The head hold, rebuilt when the port or the soft limit changed. */
-function headHold(): HeadHold {
+/** The port's one head hold, rebuilt when the port or the soft limit changed. The limit guards
+ *  the camera bracket, so it applies only with the camera rig on. */
+export function headHold(): HeadHold {
   const link = currentHpgl()
   const { profile } = useDoc.getState()
   // Plain Error, not RegistrationError: registerSheet's fast path would swallow it and search on.
   if (!link || profile.kind !== 'hpgl') throw new Error('Connect the HP-GL cutter first.')
-  const limit = useCameraRig.getState().softLimitMm
+  const rig = useCameraRig.getState()
+  const limit = rig.url ? rig.softLimitMm : null
   if (hold && link === holdLink && limit === holdLimit) return hold
   hold?.stop()
   if (link !== holdLink) link.onDisconnect(() => linkGone(link))
@@ -86,14 +89,14 @@ function linkGone(link: WebSerialTransport) {
   useRegistration.setState({ phase: 'error', message: gone.message })
 }
 
-/** Never throws: a dead port can't take the command, and the cutter drives home on silence anyway. */
-async function goHome() {
-  const h = hold
-  if (!h) return
+/** Head to the origin, hold released. Never throws: a dead port can't take the command, and the
+ *  cutter drives home on silence anyway. */
+export async function goHome(): Promise<void> {
+  if (!currentHpgl()) return
   try {
-    await h.home()
+    await headHold().home()
   } catch {
-    h.stop()
+    hold?.stop()
   }
   useSerial.getState().setHeadAway(false)
 }

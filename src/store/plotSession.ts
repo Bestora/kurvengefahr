@@ -116,8 +116,8 @@ function startGrblPlayhead(): { onDist: (mm: number) => void; stop: () => void }
 }
 
 /** A plot of the document, or of `source` (page mm, already plottable - the registration test cut).
- *  On HP-GL with the camera rig on, it cuts through the measured registration; a full job then
- *  consumes it (the sheet is done), a test cut does not. */
+ *  On HP-GL with the camera rig on, it cuts through the measured registration; a full job that
+ *  starts streaming then consumes it (the sheet is done), a test cut does not. */
 async function startWith(source?: Geometry): Promise<void> {
   const { setState: set, getState: get } = usePlotSession
   if (get().phase !== 'idle' || useRegistration.getState().phase === 'busy') return
@@ -251,13 +251,14 @@ async function startWith(source?: Geometry): Promise<void> {
         : 'Check the machine and re-zero it at the page origin before plotting again.'
     toast.error(`Plot failed: ${e instanceof Error ? e.message : String(e)}. ${recovery}`)
   } finally {
+    // A full job that reached the machine used the sheet up; one refused before streaming did not.
+    if (!source && run) useRegistration.getState().consume()
     stopPlayhead?.()
     window.removeEventListener('beforeunload', blockUnload)
     run = null
     promptResolve = null
     usePreview.getState().exit()
     set({ phase: 'idle', prompt: null })
-    if (!source && rig.url) useRegistration.getState().consume()
   }
 }
 

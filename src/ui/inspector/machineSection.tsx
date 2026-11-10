@@ -19,6 +19,7 @@ import { toast } from '../../store/toast'
 import { useLibrary } from '../../store/library'
 import { useSerial, currentEbb, currentGrbl, currentHpgl, type SerialKind } from '../../store/serial'
 import { usePlotSession } from '../../store/plotSession'
+import { goHome, headHold } from '../../store/registration'
 import { findBuiltinProfile } from '../../store/profiles'
 import { ProfilePicker } from './profilePicker'
 import { hashParams } from '../../elements/registry'
@@ -29,7 +30,6 @@ import { downloadJson, pickJsonFile } from '../../output/download'
 import type { AxidrawProfile, GrblProfile, HpglProfile, Pen, PrusaProfile } from '../../core/types'
 import { pressureEnabled } from '../../core/types'
 import { grblPenLines, newEmitCtx } from '../../core/pipeline/emitGrbl'
-import { HeadHold } from '../../output/hpgl/headHold'
 import { toMachine } from '../../core/pipeline/toMachine'
 import { validateProfile } from '../../core/profileValidation'
 import {
@@ -715,10 +715,8 @@ function HpglMachineSection({ profile }: { profile: HpglProfile }) {
 }
 
 /** Travel the head (pen up) to the fiducial and back, to check its position on the medium
- *  without plotting. `HeadHold` repeats the hold command there so the cutter doesn't read the
- *  silence as the end of the job. Module state, so the hold survives the inspector unmounting. */
-let fiducialHold: HeadHold | undefined
-
+ *  without plotting. The port's shared `HeadHold` (one per port, also the camera registration's)
+ *  repeats the hold command there so the cutter doesn't read the silence as the end of the job. */
 function GoToFiducial({ profile }: { profile: HpglProfile }) {
   const connected = useSerial((s) => s.connected)
   const away = useSerial((s) => s.headAway)
@@ -726,24 +724,13 @@ function GoToFiducial({ profile }: { profile: HpglProfile }) {
   const idle = usePlotSession((s) => s.phase === 'idle')
 
   const toggle = async () => {
-    const link = currentHpgl()
-    if (!link) return
-    // Rebuilt per click: the link and profile can change between connections.
-    if (!fiducialHold || !away) {
-      fiducialHold?.stop()
-      fiducialHold = new HeadHold(link, profile, null)
-    }
-    const hold = fiducialHold
+    if (!currentHpgl()) return
+    if (away) return goHome()
+    if (!fiducial) return
     try {
-      if (away) {
-        await hold.home()
-        useSerial.getState().setHeadAway(false)
-      } else if (fiducial) {
-        await hold.moveTo(toMachine(fiducial, profile))
-        useSerial.getState().setHeadAway(true)
-      }
+      await headHold().moveTo(toMachine(fiducial, profile))
+      useSerial.getState().setHeadAway(true)
     } catch (e) {
-      hold.stop()
       toast.error(`Couldn't reach the plotter: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
