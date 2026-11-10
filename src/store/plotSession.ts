@@ -8,7 +8,10 @@
 // `?` position reports), and mm of toolpath *sent* on HP-GL (the device reports nothing, and the
 // pen trails by its buffer — no ETA). The HUD only needs the fraction plus `etaMs`.
 import { create } from 'zustand'
-import { runPipeline } from '../core/pipeline'
+import { runPipeline, runPipelineGeometry } from '../core/pipeline'
+import { testCutGeometry } from '../core/registration'
+import type { Geometry } from '../core/types'
+import type { Affine } from '../core/wasm/registration'
 import { buildToolpath } from '../core/preview/toolpath'
 import { penParkInPage } from '../core/pipeline/toMachine'
 import { STEPS_PER_MM } from '../core/pipeline/planTypes'
@@ -16,10 +19,14 @@ import { validateProfile } from '../core/profileValidation'
 import { PlotRun } from '../output/ebb/session'
 import { GrblRun } from '../output/grbl/session'
 import { HpglRun } from '../output/hpgl/session'
+import { tapeBeyondSoftLimit } from '../output/hpgl/softLimit'
 import type { PlotDriver, PromptKind } from '../output/session'
 import { currentEbb, currentGrbl, currentHpgl, useSerial } from './serial'
+import { useCameraRig } from './cameraRig'
+import { confirmDialog } from './dialogs'
 import { useDoc } from './document'
 import { usePreview } from './preview'
+import { cutMap, useRegistration } from './registration'
 import { useTools } from './tools'
 import { toast } from './toast'
 
@@ -46,6 +53,8 @@ interface PlotSessionStore {
   currentPen: number
   prompt: PlotPrompt | null
   start: () => Promise<void>
+  /** Cut the registration test square around the square mark; leaves the registration in place. */
+  startTestCut: () => Promise<void>
   pause: () => void
   resume: () => void
   cancel: () => void
@@ -106,6 +115,152 @@ function startGrblPlayhead(): { onDist: (mm: number) => void; stop: () => void }
   return { onDist: (mm) => (target = Math.max(target, mm)), stop: () => cancelAnimationFrame(raf) }
 }
 
+/** A plot of the document, or of `source` (page mm, already plottable - the registration test cut).
+ *  On HP-GL with the camera rig on, it cuts through the measured registration; a full job then
+ *  consumes it (the sheet is done), a test cut does not. */
+async function startWith(source?: Geometry): Promise<void> {
+  const { setState: set, getState: get } = usePlotSession
+  if (get().phase !== 'idle' || useRegistration.getState().phase === 'busy') return
+  const { elements, profile, fiducial } = useDoc.getState()
+  const ebb = currentEbb()
+  const grbl = currentGrbl()
+  const hpgl = currentHpgl()
+  const connected = profile.kind === 'axidraw' ? ebb : profile.kind === 'grbl' ? grbl : profile.kind === 'hpgl' ? hpgl : null
+  if (!connected || (!source && elements.length === 0) || useSerial.getState().headAway) return
+  if (validateProfile(profile).length) {
+    toast.error('Fix the machine profile before plotting.')
+    return
+  }
+  const rig = useCameraRig.getState()
+  let map: Affine | null = null
+  if (profile.kind === 'hpgl') {
+    const reg = useRegistration.getState()
+    const cut = cutMap(rig, reg.affine)
+    if (cut.error) {
+      toast.error(cut.error)
+      return
+    }
+    const go =
+      !cut.map ||
+      !reg.warning ||
+      (await confirmDialog({ title: 'Registration warning', message: `${reg.warning} Cut anyway?`, confirmLabel: 'Cut anyway' }))
+    if (!go) return
+    map = cut.map
+  }
+  set({ phase: 'planning', done: 0, total: 0, etaMs: null, prompt: null })
+  let stopPlayhead: (() => void) | null = null
+  try {
+    const out = source
+      ? await runPipelineGeometry(source, profile, null, map)
+      : await runPipeline(elements, profile, fiducial, map)
+    const empty =
+      out.kind === 'gcode' || (out.kind === 'axidraw' ? out.plan.length === 0 : out.tape.length === 0)
+    if (empty) {
+      set({ phase: 'idle' })
+      if (out.kind !== 'gcode') toast.info('Nothing to plot — the page is empty.')
+      return
+    }
+    // The limit guards the camera bracket, so it only applies with the camera rig on.
+    if (out.kind === 'hpgl' && rig.url && tapeBeyondSoftLimit(out.tape, rig.softLimitMm)) {
+      toast.error('The job reaches past the soft limit.')
+      return
+    }
+
+    // Live overlay: read-only canvas + turtle; the playhead follows the machine.
+    const park = penParkInPage(profile)
+    useTools.getState().setTool('select')
+    usePreview.getState().enterDriven(buildToolpath(out.optimized, park, source ? null : fiducial))
+    window.addEventListener('beforeunload', blockUnload)
+
+    const sessionHooks = {
+      onPaused: () => set({ phase: 'paused' }),
+      onResumed: () => set({ phase: 'plotting' }),
+      prompt: (kind: PromptKind, pen: number) =>
+        new Promise<boolean>((resolve) => {
+          promptResolve = resolve
+          set({ phase: 'waiting', prompt: { kind, pen }, currentPen: pen })
+        }),
+    }
+
+    if (out.kind === 'axidraw' && profile.kind === 'axidraw' && ebb) {
+      const { plan } = out
+      set({ total: plan.totalDurationMs, currentPen: plan.pen[0] ?? 0, phase: 'plotting' })
+      stopPlayhead = startEbbPlayhead(plan)
+      let acked = 0
+      run = new PlotRun(plan, ebb, profile.servo, { travelSpeed: profile.motion.travelSpeed, stepsPerMm: STEPS_PER_MM }, {
+        ...sessionHooks,
+        onProgress: (i) => {
+          acked += plan.durationMs[i]
+          set({ done: acked, etaMs: plan.totalDurationMs - acked, currentPen: plan.pen[i] })
+        },
+      })
+    } else if (out.kind === 'grbl' && profile.kind === 'grbl' && grbl) {
+      const { tape } = out
+      set({ total: tape.totalDist, currentPen: tape.pen[0] ?? 0, phase: 'plotting' })
+      const playhead = startGrblPlayhead()
+      stopPlayhead = playhead.stop
+      // ETA from the observed plot rate (EMA over position reports) — pause gaps are skipped,
+      // so holding for a pen swap doesn't poison the estimate.
+      let lastT = 0
+      let lastD = 0
+      let rate = 0 // mm per ms
+      run = new GrblRun(tape, grbl, profile, {
+        ...sessionHooks,
+        onProgress: (i) => set({ currentPen: tape.pen[i] }),
+        onDist: (mm) => {
+          const now = performance.now()
+          const dt = now - lastT
+          if (lastT && dt > 0 && dt < 1000 && mm > lastD) {
+            const r = (mm - lastD) / dt
+            rate = rate ? rate * 0.8 + r * 0.2 : r
+          }
+          lastT = now
+          lastD = mm
+          playhead.onDist(mm)
+          set({ done: mm, etaMs: rate > 0 ? (tape.totalDist - mm) / rate : null })
+        },
+      })
+    } else if (out.kind === 'hpgl' && profile.kind === 'hpgl' && hpgl) {
+      const { tape } = out
+      set({ total: tape.totalDist, currentPen: tape.pen[0] ?? 0, phase: 'plotting' })
+      run = new HpglRun(tape, hpgl, profile, {
+        ...sessionHooks,
+        onProgress: (i) => {
+          usePreview.getState().setDist(tape.dist[i])
+          set({ done: tape.dist[i], currentPen: tape.pen[i] })
+        },
+      })
+    } else {
+      set({ phase: 'idle' })
+      return
+    }
+
+    const result = await run.run()
+    if (profile.kind === 'hpgl')
+      toast.info(
+        result === 'done'
+          ? 'Job sent — the plotter finishes what it has buffered.'
+          : 'Plot stopped — the plotter finishes its buffer, then the pen returns home.',
+      )
+    else if (result === 'done') toast.success('Plot finished.')
+    else toast.info('Plot stopped — the pen returned home.')
+  } catch (e) {
+    const recovery =
+      profile.kind === 'axidraw'
+        ? 'Re-park the carriage at the home corner before plotting again.'
+        : 'Check the machine and re-zero it at the page origin before plotting again.'
+    toast.error(`Plot failed: ${e instanceof Error ? e.message : String(e)}. ${recovery}`)
+  } finally {
+    stopPlayhead?.()
+    window.removeEventListener('beforeunload', blockUnload)
+    run = null
+    promptResolve = null
+    usePreview.getState().exit()
+    set({ phase: 'idle', prompt: null })
+    if (!source && rig.url) useRegistration.getState().consume()
+  }
+}
+
 export const usePlotSession = create<PlotSessionStore>((set, get) => ({
   phase: 'idle',
   total: 0,
@@ -114,123 +269,9 @@ export const usePlotSession = create<PlotSessionStore>((set, get) => ({
   currentPen: 0,
   prompt: null,
 
-  start: async () => {
-    if (get().phase !== 'idle') return
-    const { elements, profile, fiducial } = useDoc.getState()
-    const ebb = currentEbb()
-    const grbl = currentGrbl()
-    const hpgl = currentHpgl()
-    const connected = profile.kind === 'axidraw' ? ebb : profile.kind === 'grbl' ? grbl : profile.kind === 'hpgl' ? hpgl : null
-    if (!connected || elements.length === 0 || useSerial.getState().headAway) return
-    if (validateProfile(profile).length) {
-      toast.error('Fix the machine profile before plotting.')
-      return
-    }
-    set({ phase: 'planning', done: 0, total: 0, etaMs: null, prompt: null })
-    let stopPlayhead: (() => void) | null = null
-    try {
-      const out = await runPipeline(elements, profile, fiducial)
-      const empty =
-        out.kind === 'gcode' || (out.kind === 'axidraw' ? out.plan.length === 0 : out.tape.length === 0)
-      if (empty) {
-        set({ phase: 'idle' })
-        if (out.kind !== 'gcode') toast.info('Nothing to plot — the page is empty.')
-        return
-      }
+  start: () => startWith(),
 
-      // Live overlay: read-only canvas + turtle; the playhead follows the machine.
-      const park = penParkInPage(profile)
-      useTools.getState().setTool('select')
-      usePreview.getState().enterDriven(buildToolpath(out.optimized, park, fiducial))
-      window.addEventListener('beforeunload', blockUnload)
-
-      const sessionHooks = {
-        onPaused: () => set({ phase: 'paused' }),
-        onResumed: () => set({ phase: 'plotting' }),
-        prompt: (kind: PromptKind, pen: number) =>
-          new Promise<boolean>((resolve) => {
-            promptResolve = resolve
-            set({ phase: 'waiting', prompt: { kind, pen }, currentPen: pen })
-          }),
-      }
-
-      if (out.kind === 'axidraw' && profile.kind === 'axidraw' && ebb) {
-        const { plan } = out
-        set({ total: plan.totalDurationMs, currentPen: plan.pen[0] ?? 0, phase: 'plotting' })
-        stopPlayhead = startEbbPlayhead(plan)
-        let acked = 0
-        run = new PlotRun(plan, ebb, profile.servo, { travelSpeed: profile.motion.travelSpeed, stepsPerMm: STEPS_PER_MM }, {
-          ...sessionHooks,
-          onProgress: (i) => {
-            acked += plan.durationMs[i]
-            set({ done: acked, etaMs: plan.totalDurationMs - acked, currentPen: plan.pen[i] })
-          },
-        })
-      } else if (out.kind === 'grbl' && profile.kind === 'grbl' && grbl) {
-        const { tape } = out
-        set({ total: tape.totalDist, currentPen: tape.pen[0] ?? 0, phase: 'plotting' })
-        const playhead = startGrblPlayhead()
-        stopPlayhead = playhead.stop
-        // ETA from the observed plot rate (EMA over position reports) — pause gaps are skipped,
-        // so holding for a pen swap doesn't poison the estimate.
-        let lastT = 0
-        let lastD = 0
-        let rate = 0 // mm per ms
-        run = new GrblRun(tape, grbl, profile, {
-          ...sessionHooks,
-          onProgress: (i) => set({ currentPen: tape.pen[i] }),
-          onDist: (mm) => {
-            const now = performance.now()
-            const dt = now - lastT
-            if (lastT && dt > 0 && dt < 1000 && mm > lastD) {
-              const r = (mm - lastD) / dt
-              rate = rate ? rate * 0.8 + r * 0.2 : r
-            }
-            lastT = now
-            lastD = mm
-            playhead.onDist(mm)
-            set({ done: mm, etaMs: rate > 0 ? (tape.totalDist - mm) / rate : null })
-          },
-        })
-      } else if (out.kind === 'hpgl' && profile.kind === 'hpgl' && hpgl) {
-        const { tape } = out
-        set({ total: tape.totalDist, currentPen: tape.pen[0] ?? 0, phase: 'plotting' })
-        run = new HpglRun(tape, hpgl, profile, {
-          ...sessionHooks,
-          onProgress: (i) => {
-            usePreview.getState().setDist(tape.dist[i])
-            set({ done: tape.dist[i], currentPen: tape.pen[i] })
-          },
-        })
-      } else {
-        set({ phase: 'idle' })
-        return
-      }
-
-      const result = await run.run()
-      if (profile.kind === 'hpgl')
-        toast.info(
-          result === 'done'
-            ? 'Job sent — the plotter finishes what it has buffered.'
-            : 'Plot stopped — the plotter finishes its buffer, then the pen returns home.',
-        )
-      else if (result === 'done') toast.success('Plot finished.')
-      else toast.info('Plot stopped — the pen returned home.')
-    } catch (e) {
-      const recovery =
-        profile.kind === 'axidraw'
-          ? 'Re-park the carriage at the home corner before plotting again.'
-          : 'Check the machine and re-zero it at the page origin before plotting again.'
-      toast.error(`Plot failed: ${e instanceof Error ? e.message : String(e)}. ${recovery}`)
-    } finally {
-      stopPlayhead?.()
-      window.removeEventListener('beforeunload', blockUnload)
-      run = null
-      promptResolve = null
-      usePreview.getState().exit()
-      set({ phase: 'idle', prompt: null })
-    }
-  },
+  startTestCut: () => startWith(testCutGeometry(useCameraRig.getState().marks, useDoc.getState().profile.pens[0].id)),
 
   pause: () => {
     if (get().phase !== 'plotting') return
