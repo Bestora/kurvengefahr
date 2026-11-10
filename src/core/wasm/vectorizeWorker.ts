@@ -9,6 +9,7 @@ import init, { vectorize_image } from '@wasm/kg_core.js'
 import wasmUrl from '@wasm/kg_core_bg.wasm?url'
 import { getImageBlob } from '../../store/images'
 import { type RasterParams } from '../../elements/raster'
+import { decodeRgba, type Decoded } from '../decodeRgba'
 import type { FlatGeometry } from './serde'
 
 // Typed worker `postMessage` (TS otherwise resolves the DOM Window overload that wants a string).
@@ -56,31 +57,9 @@ async function pump() {
   }
 }
 
-interface Decoded {
-  rgba: Uint8Array
-  width: number
-  height: number
-}
-
 // One-entry decode cache: editing params re-traces the *same* image, so decoding it once and reusing
 // the bytes makes a live slider drag re-run only the Rust. Keyed by imageId (immutable per image).
 let decodeCache: { imageId: string; data: Decoded } | null = null
-
-/** Decode an image blob to raw RGBA bytes + dimensions via an OffscreenCanvas. */
-async function decodeRgba(blob: Blob): Promise<Decoded> {
-  const bitmap = await createImageBitmap(blob)
-  try {
-    const { width, height } = bitmap
-    const canvas = new OffscreenCanvas(width, height)
-    const ctx = canvas.getContext('2d')
-    if (!ctx) throw new Error('2D context unavailable')
-    ctx.drawImage(bitmap, 0, 0)
-    const data = ctx.getImageData(0, 0, width, height).data
-    return { rgba: new Uint8Array(data.buffer), width, height }
-  } finally {
-    bitmap.close()
-  }
-}
 
 /** Decoded RGBA for an image, from the cache when the id matches (params-only edits hit this). */
 async function getDecoded(imageId: string): Promise<Decoded> {
