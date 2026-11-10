@@ -6,6 +6,7 @@ import type { CamCal, CameraRig } from '../../store/cameraRig'
 import type { Frame } from './capture'
 import {
   SETTLE_MAX_FRAMES,
+  STALE_FRAMES,
   CONVERGE_MM,
   RegistrationError,
   calibrateCamera,
@@ -130,19 +131,19 @@ describe('settle', () => {
   it('settle waits the minimum delay before comparing', async () => {
     const { io, log } = fakeIO(world([]))
     await settle(io, 100)
-    expect(log.slice(0, 2)).toEqual(['sleep 600', 'capture'])
+    expect(log.slice(0, 2)).toEqual(['sleep 1300', 'capture'])
     log.length = 0
     await settle(io, 0)
-    expect(log[0]).toBe('sleep 250')
+    expect(log[0]).toBe('sleep 300')
   })
 
-  it('settle gives up after 15 restless frames', async () => {
+  it('settle gives up after SETTLE_MAX_FRAMES restless frames', async () => {
     const { io, log } = fakeIO(world([]))
     io.diff = () => 50
     const e = await settle(io, 0).catch((x: unknown) => x)
     expect(e).toBeInstanceOf(RegistrationError)
     expect((e as Error).message).toMatch(/did not come to rest/)
-    expect(log.filter((l) => l === 'capture')).toHaveLength(SETTLE_MAX_FRAMES)
+    expect(log.filter((l) => l === 'capture')).toHaveLength(STALE_FRAMES + SETTLE_MAX_FRAMES)
   })
 })
 
@@ -184,9 +185,11 @@ describe('registerSheet', () => {
   })
 
   it('finds the sheet when square and bottom-left corner lie on the carriage axis', async () => {
-    const { truth, marks } = sheet(placed(-0.8, false, { x: 20, y: 180 }))
+    // Not mirrored: the side of the third mark comes from the last accepted sheet's handedness.
+    const m = placed(-0.8, false, { x: 20, y: 180 })
+    const { truth, marks } = sheet(m)
     const { io } = fakeIO(world(marks))
-    expectRegistered(await registerSheet(io, rig(), () => {}), truth)
+    expectRegistered(await registerSheet(io, rig({ lastAffine: m }), () => {}), truth)
   })
 
   it('uses the last positions first', async () => {
@@ -232,9 +235,10 @@ describe('registerSheet', () => {
 
   it('never moves beyond the soft limit', async () => {
     const limit = 460
-    const { truth, marks } = sheet(placed(-0.8, false, { x: 10, y: 180 }))
+    const m = placed(-0.8, false, { x: 10, y: 180 })
+    const { truth, marks } = sheet(m)
     const { io, moves } = fakeIO(world(marks))
-    expectRegistered(await registerSheet(io, rig({ softLimitMm: limit }), () => {}), truth)
+    expectRegistered(await registerSheet(io, rig({ softLimitMm: limit, lastAffine: m }), () => {}), truth)
     for (const p of moves) {
       expect(p.y).toBeLessThanOrEqual(limit)
       expect(Math.min(p.x, p.y)).toBeGreaterThanOrEqual(0)

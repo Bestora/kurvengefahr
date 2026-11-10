@@ -5,7 +5,7 @@
 // runs against a simulated world in the tests. The cutter never reports its position: "head" is
 // always the last commanded target.
 import { checkRegistration, type MarkLayout } from '../../core/registration'
-import { fitCamera, solveAffine, type Affine, type CamMatrix, type Detected, type Pt } from '../../core/wasm/registration'
+import { affineStrain, fitCamera, solveAffine, type Affine, type CamMatrix, type Detected, type Pt } from '../../core/wasm/registration'
 import type { CamCal, CameraRig } from '../../store/cameraRig'
 import { beyondSoftLimit, CARRIAGE_AXIS } from '../hpgl/softLimit'
 import type { Frame } from './capture'
@@ -23,7 +23,9 @@ export interface RigIO {
 
 /** Mean luma difference below which two consecutive frames count as still. */
 export const SETTLE_DIFF = 3
-export const SETTLE_MAX_FRAMES = 15
+export const SETTLE_MAX_FRAMES = 40
+/** Frames the camera may still hold from before the move. */
+export const STALE_FRAMES = 2
 /** A re-measure this close to the previous one ends centering. */
 export const CONVERGE_MM = 0.15
 const CENTER_ROUNDS = 3
@@ -69,11 +71,19 @@ export function plausibleCam(cam: CamCal): boolean {
   return s >= MM_PER_PX_RANGE[0] && s <= MM_PER_PX_RANGE[1]
 }
 const stepMm = (cam: CamCal) => STEP_OF_VIEW * Math.min(cam.w, cam.h) * mmPerPx(cam.m)
-const reachable = (p: Pt, limitMm: number) => p.x >= 0 && p.y >= 0 && !beyondSoftLimit(p, limitMm)
+/** Furthest feed travel any registration move may ask for - past it the mat can leave the rollers.
+ *  ponytail: fixed for a 12" mat; make it a rig setting if longer media show up. */
+export const FEED_LIMIT_MM = 300
+const feedOf = (p: Pt) => (CARRIAGE_AXIS === 'y' ? p.x : p.y)
+const reachable = (p: Pt, limitMm: number) =>
+  p.x >= 0 && p.y >= 0 && feedOf(p) <= FEED_LIMIT_MM && !beyondSoftLimit(p, limitMm)
 
 /** Wait out the move, then return the first frame that matches its predecessor. */
 export async function settle(io: RigIO, distMm: number): Promise<Frame> {
-  await io.sleep(Math.max(250, 200 + 4 * distMm))
+  // ponytail: ~100 mm/s worst case (the feed rollers are the slow axis on the SK-720T); tune if moves get faster
+  await io.sleep(Math.max(250, 300 + 10 * distMm))
+  // The ESP32 hands out frames it grabbed earlier (driver frame buffers): drop them unseen.
+  for (let i = 0; i < STALE_FRAMES; i++) await io.capture()
   let prev = await io.capture()
   for (let i = 1; i < SETTLE_MAX_FRAMES; i++) {
     const cur = await io.capture()
@@ -257,15 +267,23 @@ async function search(
   const normal = { x: -known.y / len, y: known.x / len }
   const reach = (pageDist[missing] * len) / pageDist[which]
   onStatus(`Measuring ${LABEL[missing]}…`)
-  for (const sign of [1, -1]) {
-    const m3 = await tryMeasure(io, cam, add(square, normal, sign * reach), 'corner', lim)
-    if (m3) {
-      return which === 'topRight'
-        ? { square, topRight: corner, bottomLeft: m3 }
-        : { square, topRight: m3, bottomLeft: corner }
-    }
+  // Which side: the page's turn from the known corner to the missing one, flipped when page ->
+  // machine mirrors. Never probe the other side - that can feed the mat out.
+  // ponytail: with no accepted sheet yet, assume mirrored - a face-up sheet whose x runs along the
+  // carriage mirrors on the SK-720T (measured 2026-11-10). Make it a rig setting if a cutter differs.
+  const kp = sub(page[which], page.square)
+  const mp = sub(page[missing], page.square)
+  const turn = Math.sign(kp.x * mp.y - kp.y * mp.x) || 1
+  const mirrored = rig.lastAffine ? affineStrain(rig.lastAffine).mirrored : true
+  const sign = mirrored ? -turn : turn
+  const target = add(square, normal, sign * reach)
+  const m3 = await tryMeasure(io, cam, target, 'corner', lim)
+  if (m3) {
+    return which === 'topRight' ? { square, topRight: corner, bottomLeft: m3 } : { square, topRight: m3, bottomLeft: corner }
   }
-  throw new RegistrationError(`The ${LABEL[missing]} mark was not found.`)
+  throw new RegistrationError(
+    `The ${LABEL[missing]} mark was not found near ${fmt(target)} - it may be out of reach (negative or past the feed limit); move the origin so the whole sheet lies at positive coordinates.`,
+  )
 }
 
 /** px -> mm matrix from three looks at the square: at `start`, then PROBE_MM along x and along y. */
