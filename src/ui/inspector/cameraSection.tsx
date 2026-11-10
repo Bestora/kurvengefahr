@@ -2,7 +2,7 @@
 // cut, knife offset, soft limit and the mark layout. All actions live in `store/registration`;
 // they need the port, and refuse while a plot runs or another action is busy.
 import { useState } from 'react'
-import { PROXIES_AT_HOME_MARKS, type MarkLayout } from '../../core/registration'
+import { PROXIES_AT_HOME_MARKS, previewOrientation, type MarkLayout } from '../../core/registration'
 import { affineStrain } from '../../core/wasm/registration'
 import { useCameraRig } from '../../store/cameraRig'
 import { usePlotSession } from '../../store/plotSession'
@@ -38,6 +38,10 @@ export function CameraRegistrationSection() {
   const strain = reg.affine ? affineStrain(reg.affine) : null
   const mmPerPx = rig.cam ? Math.sqrt(Math.abs(rig.cam.m[0] * rig.cam.m[3] - rig.cam.m[1] * rig.cam.m[2])) : null
   const stale = !!rig.cam && !!frameSize && (rig.cam.w !== frameSize.w || rig.cam.h !== frameSize.h)
+  const orient = rig.cam && !stale ? previewOrientation(rig.cam.m) : [1, 0, 0, 1]
+  const swap = orient[0] === 0
+  const fw = frameSize?.w ?? rig.cam?.w ?? 4
+  const fh = frameSize?.h ?? rig.cam?.h ?? 3
 
   // Y runs along the carriage: +Y moves the head left. X is the feed axis.
   const jogBtn = (glyph: string, axis: 'X' | 'Y', sign: 1 | -1) => {
@@ -72,11 +76,19 @@ export function CameraRegistrationSection() {
         />
       </Field>
       {reg.frameUrl && (
-        <div className="relative mt-2">
+        // Shown as the operator sees the bed (see previewOrientation); raw frame until calibrated.
+        <div
+          className="relative mt-2 overflow-hidden rounded-md border border-border"
+          style={{ aspectRatio: swap ? `${fh} / ${fw}` : `${fw} / ${fh}` }}
+        >
           <img
             src={reg.frameUrl}
             alt="Camera frame"
-            className="w-full rounded-md border border-border"
+            className="absolute left-1/2 top-1/2 max-w-none"
+            style={{
+              width: swap ? `${(100 * fw) / fh}%` : '100%',
+              transform: `translate(-50%, -50%) matrix(${orient.join(', ')}, 0, 0)`,
+            }}
             onLoad={(e) => setFrameSize({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
           />
           <div className="pointer-events-none absolute left-1/2 top-0 h-full w-px bg-accent" />

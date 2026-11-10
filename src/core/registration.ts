@@ -4,7 +4,7 @@
  * and matrix math lives in Rust (`wasm/registration.ts`).
  */
 import type { Geometry, PenId } from "./types";
-import { affineStrain, type Affine, type Pt } from "./wasm/registration";
+import { affineStrain, type Affine, type CamMatrix, type Pt } from "./wasm/registration";
 
 /** Mark centroids in page mm (top-left origin). */
 export interface MarkLayout {
@@ -98,4 +98,16 @@ export function testCutGeometry(layout: MarkLayout, pen: PenId): Geometry {
     { x: x - h, y: y - h },
   ];
   return [{ points, pen, reversible: false }];
+}
+
+/** The CSS matrix `[a, b, c, d]` that turns a raw camera frame into the operator's view, standing in
+ *  front of the cutter: +Y (head left) is screen left, +X (feed, away from the operator) is screen
+ *  up. Built from the calibrated px -> mm matrix and snapped to the nearest quarter turn or mirror. */
+export function previewOrientation(m: CamMatrix): [number, number, number, number] {
+  // screen x = -(machine Y), screen y = -(machine X); machine delta = m · pixel delta.
+  const snap = (u: number, v: number): [number, number] =>
+    Math.abs(u) >= Math.abs(v) ? [Math.sign(u), 0] : [0, Math.sign(v)];
+  const [a, c] = snap(-m[2], -m[3]);
+  const [b, d] = snap(-m[0], -m[1]);
+  return [a, b, c, d];
 }

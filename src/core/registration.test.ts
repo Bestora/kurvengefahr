@@ -5,6 +5,7 @@ import {
   PROXIES_AT_HOME_MARKS,
   applyAffine,
   checkRegistration,
+  previewOrientation,
   testCutGeometry,
   withOffset,
 } from "./registration";
@@ -63,5 +64,17 @@ describe("registration core", () => {
     expect(s.points[0].x).toBeCloseTo(12.64 - 3.995, 6);
     expect(s.points[2].y).toBeCloseTo(12.65 + 3.995, 6);
     expect(s.reversible).toBe(false);
+  });
+});
+
+describe("previewOrientation", () => {
+  it("turns the SK-720T frame (image x = feed, image y = carriage) into the operator view", () => {
+    // Calibrated on the SK-720T, 2026-11-10.
+    const m: [number, number, number, number] = [-0.0885, -0.0087, 0.0031, -0.0744];
+    expect(previewOrientation(m)).toEqual([0, 1, 1, 0]);
+  });
+  it("leaves an already upright camera alone", () => {
+    // image +x = head right (-Y), image +y = toward the operator (-X)
+    expect(previewOrientation([0, -0.08, -0.08, 0])).toEqual([1, 0, 0, 1]);
   });
 });
