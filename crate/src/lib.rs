@@ -12,6 +12,9 @@
 //!   - `import_svg` — parse an SVG (usvg) → occluded multi-contour geometry.
 //!   - `vectorize_image` — raster → strokes (outline/hatch/TSP/flow/spiral/…).
 //!   - `wireframe` / `stl_mesh_preview` — STL → 3D-model wireframe strokes, + the orbit-preview mesh.
+//!   - `find_marks` / `frame_diff` / `solve_affine` / `affine_strain` / `fit_camera` — camera
+//!     registration: mark detection in a frame, frame difference, 3-point affine + its decomposition,
+//!     2x2 camera-matrix fit.
 //!   - `clip` — split strokes to the reachable rectangle.
 //!   - `optimize` — reorder strokes (chain-aware, per-pen greedy nearest-neighbour).
 //!   - `plan_axidraw` — optimized strokes → timed EBB motion segments (trapezoidal profiles).
@@ -32,6 +35,7 @@ mod model;
 mod plan;
 mod poly;
 mod raster;
+mod registration;
 mod rng;
 mod shapes;
 mod share_pow;
@@ -316,6 +320,52 @@ pub fn text(params: &str) -> GeometryBuffers {
 #[wasm_bindgen]
 pub fn simplify_polyline(xy: &[f32], tol: f32) -> Vec<f32> {
     shapes::simplify(xy, tol)
+}
+
+/// Registration marks in an RGBA frame, flat `[kind, x_px, y_px, area_mm2]*n` (kind 0 square, 1
+/// corner). `mm_per_px == 0` skips the size check.
+#[wasm_bindgen]
+pub fn find_marks(rgba: &[u8], width: u32, height: u32, mm_per_px: f64) -> Vec<f64> {
+    registration::find_marks(rgba, width as usize, height as usize, mm_per_px)
+        .iter()
+        .flat_map(|m| [m.kind as f64, m.x, m.y, m.area_mm2])
+        .collect()
+}
+
+/// Mean absolute luma difference of two RGBA frames (0..255); unequal sizes -> infinity.
+#[wasm_bindgen]
+pub fn frame_diff(a: &[u8], b: &[u8]) -> f64 {
+    registration::frame_diff(a, b)
+}
+
+/// 3 point pairs -> `[a,b,c,d,e,f]` affine, or empty when degenerate.
+#[wasm_bindgen]
+pub fn solve_affine(src: &[f64], dst: &[f64]) -> Vec<f64> {
+    match (src.try_into(), dst.try_into()) {
+        (Ok(s), Ok(d)) => registration::solve_affine(s, d)
+            .map(|m| m.to_vec())
+            .unwrap_or_default(),
+        _ => vec![],
+    }
+}
+
+/// Affine decomposition `[rot_deg, sx, sy, shear_deg, mirrored]`, or empty on bad input.
+#[wasm_bindgen]
+pub fn affine_strain(m: &[f64]) -> Vec<f64> {
+    m.try_into()
+        .map(|m| registration::affine_strain(m).to_vec())
+        .unwrap_or_default()
+}
+
+/// 2x2 camera matrix from two probe moves, or empty when singular.
+#[wasm_bindgen]
+pub fn fit_camera(du: &[f64], dh: &[f64]) -> Vec<f64> {
+    match (du.try_into(), dh.try_into()) {
+        (Ok(u), Ok(h)) => registration::fit_camera(u, h)
+            .map(|m| m.to_vec())
+            .unwrap_or_default(),
+        _ => vec![],
+    }
 }
 
 /// Split the cubic between two path nodes at `t` (de Casteljau) for inserting a node mid-segment.
