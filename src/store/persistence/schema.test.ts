@@ -30,6 +30,7 @@ import {
   type Outcome,
 } from './schema'
 import { PROFILE_PRESETS } from '../profiles'
+import { loadRig } from '../cameraRig'
 
 const GARBAGE: unknown[] = [
   null,
@@ -56,6 +57,7 @@ describe('loader totality', () => {
     ['parseDocumentFile', parseDocumentFile],
     ['parseProfilesFile', parseProfilesFile],
     ['parseToolsFile', parseToolsFile],
+    ['loadRig', loadRig],
   ]
   it.each(loaders)('%s never throws and always returns a well-formed Outcome', (_name, load) => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
