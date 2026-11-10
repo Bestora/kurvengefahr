@@ -30,7 +30,7 @@ export const STALE_FRAMES = 2
 export const CONVERGE_MM = 0.15
 const CENTER_ROUNDS = 3
 /** Search step as a fraction of the shorter image side, so neighbouring views overlap. */
-const STEP_OF_VIEW = 0.6
+const STEP_OF_VIEW = 0.8
 const SEARCH_ROWS = 4
 /** A square-to-corner distance names the corner when within this fraction of the layout's. */
 const DIST_TOL = 0.02
@@ -70,7 +70,12 @@ export function plausibleCam(cam: CamCal): boolean {
   const s = mmPerPx(cam.m)
   return s >= MM_PER_PX_RANGE[0] && s <= MM_PER_PX_RANGE[1]
 }
-const stepMm = (cam: CamCal) => STEP_OF_VIEW * Math.min(cam.w, cam.h) * mmPerPx(cam.m)
+/** Widest mark (a corner's 9.4 mm leg plus margin): a mark only counts when wholly inside the view. */
+const MARK_SPAN_MM = 10
+/** Search pitch: the strip of the view where a whole mark fits, overlapped (STEP_OF_VIEW). On the
+ *  SK-720T's ~19 mm view that is ~7 mm - a pitch of 60 % of the view left gaps a corner fell into. */
+const stepMm = (cam: CamCal) =>
+  Math.max(2, STEP_OF_VIEW * (Math.min(cam.w, cam.h) * mmPerPx(cam.m) - MARK_SPAN_MM))
 /** Furthest feed travel any registration move may ask for - past it the mat can leave the rollers.
  *  ponytail: fixed for a 12" mat; make it a rig setting if longer media show up. */
 export const FEED_LIMIT_MM = 300
@@ -126,7 +131,9 @@ function markIn(io: RigIO, cam: CamCal, f: Frame, head: Pt, kind: Detected['kind
 const look = async (io: RigIO, cam: CamCal, target: Pt, kind: Detected['kind'] | null) =>
   markIn(io, cam, await goTo(io, target), target, kind)
 
-const SPIRAL = [[0, 0], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]] as const
+/** Look positions around a guess, nearest first: the 5×5 block of steps (±2 steps). */
+const SPIRAL: readonly (readonly [number, number])[] = Array.from({ length: 25 }, (_, k) => [(k % 5) - 2, Math.floor(k / 5) - 2] as const)
+  .sort((a, b) => Math.hypot(a[0], a[1]) - Math.hypot(b[0], b[1]))
 
 /** Center the `kind` mark near `guess` under the camera; its machine-mm position. */
 export async function measureMark(
@@ -238,8 +245,21 @@ async function search(
   onStatus('Searching for the second mark…')
   let pair: { square: Pt; corner: Pt; which: Corner } | null = null
   let offDist: number | null = null
-  for (const d of [pageDist.topRight, -pageDist.topRight, pageDist.bottomLeft, -pageDist.bottomLeft]) {
-    const m2 = await tryMeasure(io, cam, add(m1, along, d), partner, lim)
+  // Guesses: from the last accepted sheet's scale and rotation first (prints are often a few % small,
+  // which puts a corner 5 mm off the layout distance), then the layout distance along the carriage.
+  const guesses: Pt[] = []
+  if (rig.lastAffine) {
+    const [a, b, , d, e] = rig.lastAffine
+    const lin = (v: Pt): Pt => ({ x: a * v.x + b * v.y, y: d * v.x + e * v.y })
+    for (const k of ['topRight', 'bottomLeft'] as const) {
+      const v = sub(page[k], page.square)
+      guesses.push(add(m1, lin(first.kind === 'square' ? v : { x: -v.x, y: -v.y }), 1))
+    }
+  }
+  for (const d of [pageDist.topRight, -pageDist.topRight, pageDist.bottomLeft, -pageDist.bottomLeft])
+    guesses.push(add(m1, along, d))
+  for (const g of guesses) {
+    const m2 = await tryMeasure(io, cam, g, partner, lim)
     if (!m2) continue
     const got = dist(m1, m2)
     const fits = (k: Corner) => Math.abs(got / pageDist[k] - 1) <= DIST_TOL
