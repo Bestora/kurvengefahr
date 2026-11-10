@@ -119,3 +119,46 @@ software, or stream it live over Web Serial.
   `.plt` download. Baud rate (default 9600) and flow control (default XON/XOFF) must match the
   cutter's settings, or its buffer overflows mid-job. The cutter sends no greeting, so the app
   can't check what it is talking to - pick the right port.
+
+### Camera registration
+
+A small ESP32-CAM clamped in the tool holder can find three printed registration marks
+(Silhouette-style: a square and two L-shaped corners) on a sheet, so the cutter cuts a printed
+design in the right place even when the sheet is shifted, rotated, or slightly skewed. It works
+with live streaming only; the `.plt` download is not registered.
+
+**Requirements**
+
+- Run Kurvengefahr on `http://localhost`. The HTTPS site cannot load an HTTP camera.
+- The camera runs the standard ESP32 `CameraWebServer` firmware; its still-image URL looks like
+  `http://<ip>/capture`. VGA resolution is recommended. Focus the lens to the working distance.
+
+**One-time setup** (Machine tab, *Camera registration*)
+
+1. Enter the *Camera URL*.
+2. Set the *Soft limit*: the furthest carriage travel with the camera fitted. It applies to camera
+   moves and to cut jobs, and only while a camera URL is set.
+3. Before the first search, check the carriage direction: *Jog* +Y must move the head left.
+4. Put the square mark under the camera and press *Calibrate camera*.
+5. Run a test cut (available once a sheet is measured). It cuts a 7.99 mm square 1 mm around the
+   square mark. Measure the white rim left around the cut; the knife offset X and Y are half the
+   difference between opposite sides. Enter them as *Knife offset X/Y*.
+
+**Per sheet**
+
+1. Import the template SVG with *Keep original position*, so the artwork sits where the marks
+   expect it.
+2. Load the printed sheet and press *Measure sheet*. The head searches for the three marks, centers
+   on each, and measures it. The first sheet scans the carriage; later sheets start where the marks
+   were last time. To start from a different spot, jog onto a mark first.
+3. Swap the camera for the knife at the origin and cut.
+
+Each registration is used by exactly one cut job, so measure again for the next sheet. Test cuts
+do not use it up.
+
+**Limits**
+
+- Three marks only: an affine fit. Scale must be within 0.98 to 1.02 and shear within 0.5 degrees.
+  You get a warning when a sheet's distortion differs noticeably from the previous sheet's.
+- Live streaming only; the `.plt` download is not registered.
+- Camera settings are stored per browser, not in the document.
