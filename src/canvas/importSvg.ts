@@ -35,6 +35,8 @@ export interface SvgImportOptions {
   colorToPen: boolean
   /** Name for the group the imported shapes are collected under (so the tree stays tidy). */
   groupName?: string
+  /** Keep the SVG's own coordinates (its origin = the page origin) instead of centring on the bed. */
+  keepPosition: boolean
 }
 
 export const defaultSvgImportOptions = (): SvgImportOptions => ({
@@ -45,6 +47,7 @@ export const defaultSvgImportOptions = (): SvgImportOptions => ({
   density: 0.8,
   mapDensity: true,
   colorToPen: true,
+  keepPosition: false,
 })
 
 function hexRgb(hex: string): { r: number; g: number; b: number } {
@@ -101,6 +104,16 @@ export function mergePathSpecsByPen<T extends { type: string; params: PathParams
   return out
 }
 
+/** Translation applied to imported geometry: centre the bounds on the bed, or none. */
+export function importOffset(
+  b: { minX: number; minY: number; maxX: number; maxY: number },
+  bed: { width: number; height: number },
+  keepPosition: boolean,
+): { x: number; y: number } {
+  if (keepPosition) return { x: 0, y: 0 }
+  return { x: bed.width / 2 - (b.minX + b.maxX) / 2, y: bed.height / 2 - (b.minY + b.maxY) / 2 }
+}
+
 /** Import an SVG's bytes as native path elements. Returns the number of elements created. */
 export function addSvgElements(bytes: Uint8Array, opts: SvgImportOptions): number {
   const shapes = importSvgRaw(bytes, opts.occlude, opts.targetSize, opts.pxToMm)
@@ -121,8 +134,7 @@ export function addSvgElements(bytes: Uint8Array, opts: SvgImportOptions): numbe
         if (p.y > maxY) maxY = p.y
       }
   if (!Number.isFinite(minX)) return 0
-  const offX = profile.bed.width / 2 - (minX + maxX) / 2
-  const offY = profile.bed.height / 2 - (minY + maxY) / 2
+  const { x: offX, y: offY } = importOffset({ minX, minY, maxX, maxY }, profile.bed, opts.keepPosition)
 
   const specs = shapes
     .map((s) => {

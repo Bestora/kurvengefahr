@@ -109,7 +109,7 @@ export function SvgImportDialog() {
 
   const filled = opts.fillStyle !== 'none'
   const onImport = () => {
-    addSvgElements(pending.bytes, { ...opts, pxToMm, groupName: pending.name.replace(/\.svg$/i, '') })
+    addSvgElements(pending.bytes, { ...opts, keepPosition: opts.keepPosition && scaleMode === 'actual', pxToMm, groupName: pending.name.replace(/\.svg$/i, '') })
     close()
   }
 
@@ -134,6 +134,13 @@ export function SvgImportDialog() {
       )}
       {scaleMode === 'actual' && physical && (
         <p className="text-xs text-muted">Physical units detected — imported 1:1.</p>
+      )}
+      {scaleMode === 'actual' && (
+        <Check
+          label="Keep original position"
+          checked={opts.keepPosition}
+          onChange={(v) => set({ keepPosition: v })}
+        />
       )}
       <Check
         label="Occlude hidden parts"

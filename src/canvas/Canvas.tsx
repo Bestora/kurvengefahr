@@ -27,6 +27,7 @@ import { DrawingPreview } from './DrawingPreview'
 import { NodeEditLayer, NODE_ANCHOR, NODE_MIDPOINT } from './NodeEditLayer'
 import { GhostLayer } from './GhostLayer'
 import { TurtleMarker } from './TurtleMarker'
+import { RegistrationMarksLayer } from './RegistrationMarksLayer'
 import { FiducialLayer } from './FiducialLayer'
 import { SnapGrid } from './SnapLayer'
 import { useSnap } from '../store/snap'
@@ -699,6 +700,7 @@ export function Canvas() {
           {!previewActive && !drawing && <NodeEditLayer pxPerMm={scale} />}
           {!previewActive && !drawing && <HoverHighlight pxPerMm={scale} />}
           {!previewActive && !drawing && <KeyHighlight pxPerMm={scale} />}
+          <RegistrationMarksLayer pxPerMm={scale} />
           <FiducialLayer pxPerMm={scale} interactive={!previewActive && !spaceHeld && !drawing} />
           {marquee && (
             <Rect

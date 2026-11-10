@@ -19,7 +19,7 @@ import { toast } from '../../store/toast'
 import { useLibrary } from '../../store/library'
 import { useSerial, currentEbb, currentGrbl, currentHpgl, type SerialKind } from '../../store/serial'
 import { usePlotSession } from '../../store/plotSession'
-import { goHome, headHold } from '../../store/registration'
+import { goHome, headHold, useRegistration } from '../../store/registration'
 import { findBuiltinProfile } from '../../store/profiles'
 import { ProfilePicker } from './profilePicker'
 import { hashParams } from '../../elements/registry'
@@ -47,6 +47,7 @@ import {
   cx,
 } from '../primitives'
 import { Num, PEN_PALETTE } from './controls'
+import { CameraRegistrationSection } from './cameraSection'
 
 /** Profile selector + library actions. Built-ins seed the working profile; "Save as" stores the
  *  current (possibly edited) profile under a name; "Update" overwrites the selected saved profile.
@@ -659,6 +660,7 @@ function HpglMachineSection({ profile }: { profile: HpglProfile }) {
     <>
       <SerialDeviceSection profile={profile} />
       <GoToFiducial profile={profile} />
+      <CameraRegistrationSection />
       <Disclosure label="Advanced">
         <Field label="Baud rate" title="Must match the cutter's setting (often 9600). Changing it disconnects — reconnect after.">
           <select className={controlClass} value={profile.baudRate} onChange={(e) => setPort({ baudRate: Number(e.target.value) })}>
@@ -722,6 +724,7 @@ function GoToFiducial({ profile }: { profile: HpglProfile }) {
   const away = useSerial((s) => s.headAway)
   const fiducial = useDoc((s) => s.fiducial)
   const idle = usePlotSession((s) => s.phase === 'idle')
+  const regBusy = useRegistration((s) => s.phase === 'busy')
 
   const toggle = async () => {
     if (!currentHpgl()) return
@@ -738,7 +741,7 @@ function GoToFiducial({ profile }: { profile: HpglProfile }) {
   return (
     <Button
       className="mt-2 w-full"
-      disabled={!connected || !idle || (!away && !fiducial)}
+      disabled={!connected || !idle || regBusy || (!away && !fiducial)}
       onClick={() => void toggle()}
       title={
         away
