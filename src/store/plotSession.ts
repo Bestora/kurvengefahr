@@ -136,7 +136,17 @@ async function startWith(source?: Geometry): Promise<void> {
   let map: Affine | null = null
   if (profile.kind === 'hpgl') {
     const reg = useRegistration.getState()
-    const cut = cutMap(rig, reg.affine)
+    // A cut used the measurement up; the same sheet, still loaded, may be cut again with it.
+    const again =
+      !reg.affine &&
+      !!rig.url &&
+      !!rig.lastAffine &&
+      (await confirmDialog({
+        title: 'Cut again?',
+        message: 'The last measurement was used by a cut. Cut with it again? Only if the sheet has not moved.',
+        confirmLabel: 'Cut again',
+      }))
+    const cut = cutMap(rig, again ? rig.lastAffine : reg.affine)
     if (cut.error) {
       toast.error(cut.error)
       return

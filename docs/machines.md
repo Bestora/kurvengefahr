@@ -178,8 +178,13 @@ stopped.
    difference.
 4. Swap the camera for the knife at the origin and cut.
 
-Each registration is used by exactly one cut job, so measure again for the next sheet. Test cuts
-do not use it up.
+Each registration is used by one cut job, so measure again for the next sheet. To cut the same
+sheet again without moving it, press *Plot* and confirm *Cut again*: it reuses the last
+measurement. Test cuts do not use it up.
+
+The head never goes below the carriage origin (it would hit the frame) or past the *Soft limit*.
+Behind the feed origin is fine: a mark printed right at the sheet edge or a slightly skewed sheet's
+far corner is still measured.
 
 **Limits**
 
