@@ -50,7 +50,8 @@ export function grblPenLines(profile: GrblProfile, dir: 'down' | 'up', pressure:
     ctx.lastF = f3(profile.feeds.travel)
     return [`G1 Z${ctx.lastZ} F${ctx.lastF}`]
   }
-  const s = dir === 'down' ? pen.downS : pen.upS
+  // Laser dry run: the beam stays off no matter what downS says.
+  const s = dir === 'up' ? pen.upS : profile.laser?.dryRun ? 0 : pen.downS
   const settleMs = dir === 'down' ? pen.lowerMs : pen.raiseMs
   const lines = [`M3 S${Math.round(s)}`]
   if (settleMs > 0) lines.push(`G4 P${(settleMs / 1000).toFixed(3)}`)

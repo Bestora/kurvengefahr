@@ -4,6 +4,7 @@ import { runPipeline } from '../core/pipeline'
 import { emitGrbl } from '../core/pipeline/emitGrbl'
 import { emitHpgl } from '../core/pipeline/emitHpgl'
 import { validateProfile } from '../core/profileValidation'
+import { confirmLaser } from '../store/dialogs'
 import { useDoc } from '../store/document'
 import { useDocuments } from '../store/documents'
 import { toast } from '../store/toast'
@@ -26,6 +27,7 @@ export async function exportGcode(): Promise<void> {
     toast.error('Fix the machine profile before generating G-code.')
     return
   }
+  if (!(await confirmLaser(profile, 'Running this G-code file'))) return
   const out = await runPipeline(elements, profile, fiducial)
   if (out.kind === 'gcode') await downloadSink.send(gcodeFilename(), out.gcode)
   else if (out.kind === 'grbl' && profile.kind === 'grbl')

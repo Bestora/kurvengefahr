@@ -304,6 +304,10 @@ export interface GrblProfile extends MachineProfileBase {
   /** `$H` at job start (machine has limit switches). Off: wherever the machine sits becomes work
    *  zero (`G10 L20`) and the job walks back there at the end — the EBB convention. */
   homing: boolean
+  /** Present = the servo pin drives a laser (`M3 S` = power). `dryRun` forces pen-down to `S0`
+   *  regardless of `downS`, so a test run traces the job with the beam off. Live laser output
+   *  (download, stream, pen test) asks for confirmation first — see {@link laserLive}. */
+  laser?: { dryRun: boolean }
   preamble: string
   postamble: string
   /** Operator-pause macro for the *downloaded* file (`M0` support depends on the sender); live
@@ -339,6 +343,11 @@ export function pressureEnabled(profile: MachineProfile): boolean {
   if (profile.kind === 'prusa') return profile.penZ.downLight !== undefined
   if (profile.kind === 'grbl') return profile.pen.mode === 'z' && profile.pen.downLight !== undefined
   return false
+}
+
+/** True when this profile's output fires a laser (laser machine, not in dry run). */
+export function laserLive(profile: MachineProfile): boolean {
+  return profile.kind === 'grbl' && profile.laser !== undefined && !profile.laser.dryRun
 }
 
 /** The pen↔nozzle offset for kinds that have one; on an AxiDraw or GRBL plotter the pen *is* the

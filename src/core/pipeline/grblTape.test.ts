@@ -95,6 +95,16 @@ describe('emitGrbl', () => {
     expect(lines.at(-1)).toBe('M5')
   })
 
+  it('laser dry run never sends power, whatever downS says; live laser does', () => {
+    const job = (dryRun: boolean) => {
+      const p = profile({ pen: { mode: 'servo', upS: 0, downS: 300, raiseMs: 0, lowerMs: 0 }, laser: { dryRun } })
+      return emitGrbl(planGrblTape([stroke([[10, 0], [20, 0]])], p), p).split('\n')
+    }
+    expect(job(true).filter((l) => l.startsWith('M3'))).toEqual(expect.arrayContaining(['M3 S0']))
+    expect(job(true).filter((l) => /^M3 S[1-9]/.test(l))).toEqual([])
+    expect(job(false)).toContain('M3 S300')
+  })
+
   it('renders $H (and still sets work zero) when homing is on', () => {
     const p = profile({ homing: true })
     const lines = emitGrbl(planGrblTape([stroke([[10, 0], [20, 0]])], p), p).split('\n')

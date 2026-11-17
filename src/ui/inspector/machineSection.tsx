@@ -14,7 +14,7 @@ import {
   Cable,
 } from 'lucide-react'
 import { useDoc } from '../../store/document'
-import { confirmDialog, promptDialog } from '../../store/dialogs'
+import { confirmDialog, confirmLaser, promptDialog } from '../../store/dialogs'
 import { toast } from '../../store/toast'
 import { useLibrary } from '../../store/library'
 import { useSerial, currentEbb, currentGrbl, currentHpgl, type SerialKind } from '../../store/serial'
@@ -28,7 +28,7 @@ import { printerStatus, type PrinterStatus } from '../../output/plot'
 import { useBridge, isPrinterConnected } from '../../store/bridge'
 import { downloadJson, pickJsonFile } from '../../output/download'
 import type { AxidrawProfile, GrblProfile, HpglProfile, Pen, PrusaProfile } from '../../core/types'
-import { pressureEnabled } from '../../core/types'
+import { laserLive, pressureEnabled } from '../../core/types'
 import { grblPenLines, newEmitCtx } from '../../core/pipeline/emitGrbl'
 import { toMachine } from '../../core/pipeline/toMachine'
 import { validateProfile } from '../../core/profileValidation'
@@ -485,6 +485,7 @@ function GrblMachineSection({ profile }: { profile: GrblProfile }) {
 
   return (
     <>
+      {profile.laser && <LaserSection profile={profile} />}
       <SerialDeviceSection profile={profile} />
       <Disclosure label="Advanced">
         <Field
@@ -767,6 +768,8 @@ function GrblPenTest({ profile }: { profile: GrblProfile }) {
   const bounce = async (up: boolean) => {
     const grbl = currentGrbl()
     if (!grbl) return
+    // Lowering a live laser fires it in place — the beam burns a hole while it sits there.
+    if (!up && !(await confirmLaser(profile, 'The pen test'))) return
     try {
       for (const line of grblPenLines(profile, up ? 'up' : 'down', 1, newEmitCtx())) await grbl.send(line)
       setPenUp(up)
@@ -783,6 +786,33 @@ function GrblPenTest({ profile }: { profile: GrblProfile }) {
     >
       {penUp ? 'Test: lower pen' : 'Test: raise pen'}
     </Button>
+  )
+}
+
+/** Laser machines only: the dry-run switch, and a red banner for as long as output fires the beam. */
+function LaserSection({ profile }: { profile: GrblProfile }) {
+  const setProfile = useDoc((s) => s.setProfile)
+  const live = laserLive(profile)
+  return (
+    <>
+      {live && (
+        <div role="alert" className="mb-2 rounded-md bg-accent-solid px-3 py-2 text-white">
+          <p className="text-base font-black uppercase tracking-wide">Laser armed</p>
+          <p className="text-xs font-semibold">Plot, G-code and pen test fire the beam. Goggles on.</p>
+        </div>
+      )}
+      <Field
+        label="Dry run (laser off)"
+        title="On: every pen-down is sent as M3 S0, so the job traces with the beam off, whatever Down (S) says."
+      >
+        <input
+          type="checkbox"
+          className="h-4 w-4 justify-self-start"
+          checked={!live}
+          onChange={(e) => setProfile({ laser: { dryRun: e.target.checked } })}
+        />
+      </Field>
+    </>
   )
 }
 

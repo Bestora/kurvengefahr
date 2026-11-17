@@ -189,6 +189,12 @@ describe('sanitizeProfile', () => {
   it('dispatches on kind, coercing unknown kinds to prusa', () => {
     expect(sanitizeProfile({ kind: 'axidraw' }).kind).toBe('axidraw')
     expect(sanitizeProfile({ kind: 'grbl' }).kind).toBe('grbl')
+    // A malformed laser flag must load dry (beam off), never armed; no flag = no laser.
+    const laserOf = (raw: object) => (sanitizeProfile({ kind: 'grbl', ...raw }) as { laser?: unknown }).laser
+    expect(laserOf({ laser: {} })).toEqual({ dryRun: true })
+    expect(laserOf({ laser: { dryRun: 'no' } })).toEqual({ dryRun: true })
+    expect(laserOf({ laser: { dryRun: false } })).toEqual({ dryRun: false })
+    expect(laserOf({})).toBeUndefined()
     expect(sanitizeProfile({ kind: 'reprap' }).kind).toBe('prusa')
     expect(sanitizeProfile(null).kind).toBe('prusa')
   })

@@ -72,6 +72,15 @@ lines and follows along.
   Without them (most hobby plotters), the job's origin is wherever the pen sits when it starts -
   park it at the page origin, like an AxiDraw. Either way the work zero is written with `G10 L20`,
   so even a cancelled job can walk back home.
+- **Diode lasers work too.** On GRBL in laser mode (`$32=1`) the servo pen's `M3 S` is laser
+  power: up `S0` = off, down = power (out of `$30`), settle times 0 so no dwell burns a dot. Pick
+  *Atomstack A5 Pro+ (dry run, laser off)* to trace a job with the beam off - every pen-down is
+  sent as `S0`, whatever the power setting says - and *Atomstack A5 Pro+ (LASER)* to burn. Both
+  home first (endstops front-left; switch the origin to top-left for back-left switches). The
+  *Dry run* checkbox in Machine settings flips any laser profile between the two. While the laser
+  is armed, a red banner sits in Machine settings, the plot bar shows *Laser on*, and plotting,
+  generating G-code and the pen test each ask you to confirm a red warning first. Laser output is
+  on/off only - no pressure, no per-pen power.
 - **The live view follows the machine.** While streaming, the board's own position reports drive
   the playhead and progress - what you see is where the pen actually is, not an estimate.
 - **Pausing lands between strokes** (pen up, queue drained), so resume is exact. Stopping a plot
@@ -140,6 +149,11 @@ with live streaming only.
    moves and to cut jobs, and only while a camera URL is set.
 3. Before the first search, check the carriage direction: *Jog* +Y must move the head left.
 4. Put the square mark under the camera and press *Calibrate camera*.
+5. Open *Mark layout* if your template differs from the Proxies at Home sheet. *Horizontal
+   corner* sets whether the corner mark level with the square lies right or left of it, *Vertical
+   corner* whether the other one lies below or above it. Switching a side mirrors the corners
+   across the square. Then enter the square's position from the template: it moves all three
+   marks. Fine-tune a single corner with its own X and Y.
 
 With a camera URL set, every live HP-GL cut is refused until the sheet is measured. Clear the URL
 for plain plotting. Recalibrate after changing the camera resolution.

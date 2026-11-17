@@ -200,6 +200,8 @@ function sanitizeGrblProfile(p: Record<string, any>): MachineProfile {
     feeds: { travel: num(p.feeds?.travel, base.feeds.travel), draw: num(p.feeds?.draw, base.feeds.draw) },
     pen,
     homing: p.homing === true,
+    // Anything but an explicit `dryRun: false` stays dry — a malformed file must not arm the laser.
+    ...(isObj(p.laser) ? { laser: { dryRun: p.laser.dryRun !== false } } : {}),
     pens,
     preamble: str(p.preamble, base.preamble),
     postamble: str(p.postamble, base.postamble),

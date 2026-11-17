@@ -8,6 +8,7 @@ import { useDoc } from '../store/document'
 import { usePlotSession } from '../store/plotSession'
 import { useSerial } from '../store/serial'
 import { validateProfile } from '../core/profileValidation'
+import { laserLive } from '../core/types'
 import { Button, IconButton, Modal } from './primitives'
 
 function fmtEta(ms: number): string {
@@ -78,6 +79,7 @@ export function PlotHUD() {
   const pens = useDoc((s) => s.profile.pens)
   // HP-GL devices report nothing back: progress is what's been sent, and prompts arrive early.
   const sendOnly = useDoc((s) => s.profile.kind === 'hpgl')
+  const laser = useDoc((s) => laserLive(s.profile))
   const s = usePlotSession.getState()
 
   if (phase === 'idle') return null
@@ -91,6 +93,11 @@ export function PlotHUD() {
       aria-label="Plot progress"
       className="m-2 flex shrink-0 items-center gap-2.5 rounded-card border border-border bg-surface px-2.5 py-2 shadow-panel"
     >
+      {laser && (
+        <span role="alert" className="shrink-0 animate-pulse rounded bg-accent-solid px-2 py-0.5 text-xs font-black uppercase text-white">
+          Laser on
+        </span>
+      )}
       <span
         className="h-3.5 w-3.5 shrink-0 rounded-full border border-border"
         style={{ backgroundColor: pen?.color }}

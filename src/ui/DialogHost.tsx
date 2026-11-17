@@ -36,7 +36,12 @@ function Dialog({ request }: { request: DialogRequest }) {
 
   return (
     <Modal title={request.title} onClose={cancel} className="max-w-sm">
-      {request.kind === 'confirm' ? (
+      {request.kind === 'confirm' && request.alarm ? (
+        <div role="alert" className="rounded-md bg-accent-solid p-4 text-white">
+          <p className="mb-2 text-2xl font-black uppercase tracking-wide">Warning: laser</p>
+          <p className="text-sm font-semibold leading-snug">{request.message}</p>
+        </div>
+      ) : request.kind === 'confirm' ? (
         <p className="text-sm text-muted">{request.message}</p>
       ) : (
         <form

@@ -129,6 +129,29 @@ const grblVariant = (id: string, name: string, width: number, height: number): G
 const ELEKSDRAW = grblVariant('eleksdraw', 'EleksDraw', 280, 200)
 const FOURXIDRAW = grblVariant('4xidraw', '4xiDraw (A4)', 300, 218)
 
+// Diode laser on stock GRBL 1.1 in laser mode ($32=1): servo mode's `M3 S` *is* laser power, so
+// up = S0 (off), down = power out of $30 (1000 on Atomstack). Zero settle times — a G4 dwell with
+// the beam on burns a dot. Homing assumes retrofitted front-left endstops; flip origin to
+// top-left for back-left switches. Travel 410×400 per Atomstack's spec, minus the $27 pull-off.
+// Two presets: the dry run traces the job beam-off (pen-down forced to S0), the other fires.
+const ATOMSTACK_A5_PRO_PLUS: GrblProfile = {
+  ...structuredClone(GRBL_PLOTTER),
+  id: 'atomstack-a5-pro-plus',
+  name: 'Atomstack A5 Pro+ (LASER)',
+  bed: { width: 405, height: 395 },
+  feeds: { travel: 6000, draw: 1500 },
+  pen: { mode: 'servo', upS: 0, downS: 300, raiseMs: 0, lowerMs: 0 },
+  homing: true,
+  laser: { dryRun: false },
+  pens: [{ id: 0, name: 'Laser', color: '#1a1a1a' }],
+}
+const ATOMSTACK_A5_PRO_PLUS_DRY: GrblProfile = {
+  ...structuredClone(ATOMSTACK_A5_PRO_PLUS),
+  id: 'atomstack-a5-pro-plus-dry',
+  name: 'Atomstack A5 Pro+ (dry run, laser off)',
+  laser: { dryRun: true },
+}
+
 // 9600 baud + XON/XOFF is the common vinyl-cutter default (and Inkscape's). Speed and force stay
 // on the device's own panel settings until set here.
 export const HPGL_CUTTER: HpglProfile = {
@@ -168,6 +191,8 @@ export const PROFILE_PRESETS: MachineProfile[] = [
   GRBL_PLOTTER,
   ELEKSDRAW,
   FOURXIDRAW,
+  ATOMSTACK_A5_PRO_PLUS_DRY,
+  ATOMSTACK_A5_PRO_PLUS,
   HPGL_CUTTER,
   SK_720T,
 ]

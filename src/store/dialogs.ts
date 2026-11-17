@@ -8,6 +8,7 @@
 // Requests queue FIFO so overlapping calls can't clobber each other. Native alert/confirm/prompt
 // are banned (see CLAUDE.md): notifications go through store/toast instead.
 import { create } from 'zustand'
+import { laserLive, type MachineProfile } from '../core/types'
 
 export type DialogRequest = { id: number } & (
   | {
@@ -17,6 +18,8 @@ export type DialogRequest = { id: number } & (
       confirmLabel: string
       /** Destructive action → the confirm button uses the danger style. */
       danger: boolean
+      /** Physical hazard (live laser) → the message renders as a big red warning block. */
+      alarm: boolean
       resolve: (ok: boolean) => void
     }
   | {
@@ -54,6 +57,7 @@ export function confirmDialog(opts: {
   message: string
   confirmLabel?: string
   danger?: boolean
+  alarm?: boolean
 }): Promise<boolean> {
   return new Promise((resolve) => {
     useDialogs.getState()._push({
@@ -62,7 +66,8 @@ export function confirmDialog(opts: {
       title: opts.title,
       message: opts.message,
       confirmLabel: opts.confirmLabel ?? 'OK',
-      danger: opts.danger ?? false,
+      danger: opts.danger ?? opts.alarm ?? false,
+      alarm: opts.alarm ?? false,
       resolve,
     })
   })
@@ -85,5 +90,20 @@ export function promptDialog(opts: {
       confirmLabel: opts.confirmLabel ?? 'Save',
       resolve,
     })
+  })
+}
+
+/** Gate for anything that may fire a laser (stream, download, pen test). Resolves true straight
+ *  away for non-laser profiles and dry runs; otherwise the operator must confirm a red warning. */
+export function confirmLaser(profile: MachineProfile, action: string): Promise<boolean> {
+  if (!laserLive(profile)) return Promise.resolve(true)
+  return confirmDialog({
+    title: 'LASER WILL FIRE',
+    message:
+      `${action} switches the laser ON. Everyone in the room wears laser safety goggles, ` +
+      'the material is safe to laser (no PVC, no vinyl), extraction is running, ' +
+      'and someone stays at the machine with a hand on the power switch until it finishes.',
+    confirmLabel: 'Laser on - I am at the machine',
+    alarm: true,
   })
 }

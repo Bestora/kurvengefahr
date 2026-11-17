@@ -23,7 +23,7 @@ import { tapeBeyondSoftLimit } from '../output/hpgl/softLimit'
 import type { PlotDriver, PromptKind } from '../output/session'
 import { currentEbb, currentGrbl, currentHpgl, useSerial } from './serial'
 import { useCameraRig } from './cameraRig'
-import { confirmDialog } from './dialogs'
+import { confirmDialog, confirmLaser } from './dialogs'
 import { useDoc } from './document'
 import { usePreview } from './preview'
 import { cutMap, useRegistration } from './registration'
@@ -131,6 +131,7 @@ async function startWith(source?: Geometry): Promise<void> {
     toast.error('Fix the machine profile before plotting.')
     return
   }
+  if (!(await confirmLaser(profile, source ? 'This test run' : 'This job'))) return
   const rig = useCameraRig.getState()
   let map: Affine | null = null
   if (profile.kind === 'hpgl') {
