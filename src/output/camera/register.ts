@@ -97,9 +97,10 @@ function whyOut(p: Pt, limitMm: number): string {
   if (feed < 0) return `${(-feed).toFixed(1)} mm behind the origin in ${F} (feed)`
   return `${(-carriage).toFixed(1)} mm behind the origin in ${C} (carriage)`
 }
-/** A mark up to this far past a limit (a square printed right at the origin) is measured off-center
+/** How far past a limit a mark may lie and still be wholly in view from the limit (a square printed
+ *  right at the origin, a slightly skewed sheet's far corner). Such a mark is measured off-center
  *  from the limit - the calibrated camera matrix maps the offset; the head never crosses. */
-const EDGE_MM = 3
+const edgeMm = (cam: CamCal) => Math.max(0, (Math.min(cam.w, cam.h) * mmPerPx(cam.m) - MARK_SPAN_MM) / 2)
 
 /** Wait out the move, then return the first frame that matches its predecessor. */
 export async function settle(io: RigIO, distMm: number): Promise<Frame> {
@@ -163,7 +164,7 @@ export async function measureMark(
 ): Promise<Pt> {
   // A mark further out can never be measured - say so before touring the looks around it.
   // ponytail: a partner guess just past the edge band gives up even if its mark lies just inside.
-  const outOfReach = (p: Pt) => dist(p, clampReach(p, limitMm)) > EDGE_MM
+  const outOfReach = (p: Pt) => dist(p, clampReach(p, limitMm)) > edgeMm(cam)
   if (outOfReach(guess)) {
     throw new MarkNotFound(
       `The ${kind} mark near ${fmt(guess)} is out of reach: ${whyOut(guess, limitMm)}.`,
@@ -181,9 +182,15 @@ export async function measureMark(
   // Each round looks from the last estimate (clamped into reach) until the estimate stops moving.
   let p: Pt = hit
   for (let i = 0; i < CENTER_ROUNDS; i++) {
-    if (outOfReach(p)) throw new RegistrationError(`The ${kind} mark at ${fmt(p)} is out of reach.`)
-    const q: Pt | undefined = (await look(io, cam, clampReach(p, limitMm), kind))?.at
-    if (!q) throw new RegistrationError(`Lost the ${kind} mark while centering it.`)
+    const t = clampReach(p, limitMm)
+    const q: Pt | undefined = (await look(io, cam, t, kind))?.at
+    if (!q) {
+      throw new RegistrationError(
+        dist(p, t) > 0
+          ? `The ${kind} mark at ${fmt(p)} is out of reach: ${whyOut(p, limitMm)}.`
+          : `Lost the ${kind} mark while centering it.`,
+      )
+    }
     if (dist(p, q) <= CONVERGE_MM) return q
     p = q
   }
