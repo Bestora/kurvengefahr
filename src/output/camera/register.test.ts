@@ -230,7 +230,7 @@ describe('registerSheet', () => {
     const { io, moves } = fakeIO(world(marks, { head: { x: truth.cornerX.x + 3, y: truth.cornerX.y - 4 } }))
     expectRegistered(await registerSheet(io, rig(), (m) => status.push(m)), truth)
     expect(status).not.toContain('Searching for the first mark…')
-    expect(moves.length).toBeLessThanOrEqual(9)
+    expect(moves.length).toBeLessThanOrEqual(12) // partner guesses behind the feed origin are looks too
   })
 
   it('starts from the jogged mark when the last positions are stale', async () => {
@@ -243,39 +243,27 @@ describe('registerSheet', () => {
     expect(status).not.toContain('Searching for the first mark…')
   })
 
-  it('measures a corner as far behind the origin as the view allows', async () => {
-    // Test view 30 mm, mark span 10 mm: up to 10 mm past a limit is still wholly in view.
+  it('measures marks behind the feed origin', async () => {
     const c = { x: -8, y: 120 }
-    const { io, moves } = fakeIO(world([{ kind: 'corner', at: c }]))
+    const { io } = fakeIO(world([{ kind: 'corner', at: c }]))
     expect(dist(await measureMark(io, cam, c, 'corner', LIMIT), c)).toBeLessThan(0.05)
-    for (const m of moves) expect(m.x).toBeGreaterThanOrEqual(0)
   })
 
-  it('measures a square printed just behind the origin without crossing it', async () => {
-    const sq = { x: -0.5, y: 72 }
+  it('looks at a mark just below the carriage origin from the origin, never below it', async () => {
+    const sq = { x: 40, y: -0.5 }
     const { io, moves } = fakeIO(world([{ kind: 'square', at: sq }]))
-    const p = await measureMark(io, cam, sq, 'square', LIMIT)
-    expect(dist(p, sq)).toBeLessThan(0.05)
-    for (const m of moves) expect(Math.min(m.x, m.y)).toBeGreaterThanOrEqual(0)
-    // The first look is from the origin edge right beside it, not a step away.
-    expect(dist(moves[0], { x: 0, y: 72 })).toBeLessThan(0.01)
+    expect(dist(await measureMark(io, cam, sq, 'square', LIMIT), sq)).toBeLessThan(0.05)
+    for (const m of moves) expect(m.y).toBeGreaterThanOrEqual(0)
+    expect(dist(moves[0], { x: 40, y: 0 })).toBeLessThan(0.01)
   })
 
-  it('says when the mark lies below the origin', async () => {
-    const { io, moves } = fakeIO(world([{ kind: 'square', at: { x: -40, y: -60 } }]))
-    await expect(measureMark(io, cam, { x: -40, y: -60 }, 'square', LIMIT)).rejects.toThrow(/out of reach/)
-    expect(moves).toHaveLength(0)
-    // Just behind the feed origin: reachable looks exist but only see the mark cut off.
-    const near = fakeIO(world([{ kind: 'square', at: { x: -19, y: 30 } }]))
-    await expect(measureMark(near.io, cam, { x: -19, y: 30 }, 'square', LIMIT)).rejects.toThrow(/out of reach/)
-    expect(near.moves).toHaveLength(0)
-    const far = fakeIO(world([]))
-    await expect(measureMark(far.io, cam, { x: 10, y: LIMIT + 64.8 }, 'corner', LIMIT)).rejects.toThrow(
-      'out of reach: 64.8 mm past the soft limit',
+  it('says which limit a mark it cannot see lies past', async () => {
+    const { io, moves } = fakeIO(world([]))
+    await expect(measureMark(io, cam, { x: 10, y: LIMIT + 64.8 }, 'corner', LIMIT)).rejects.toThrow(
+      'It lies 64.8 mm past the soft limit',
     )
-    await expect(measureMark(far.io, cam, { x: -13.7, y: 50 }, 'corner', LIMIT)).rejects.toThrow(
-      'out of reach: 13.7 mm behind the origin in X (feed)',
-    )
+    for (const m of moves) expect(m.y).toBeLessThanOrEqual(LIMIT)
+    expect(moves.length).toBeLessThan(25) // looks past the limit collapse onto it
   })
 
   it('never moves beyond the soft limit', async () => {

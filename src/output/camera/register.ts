@@ -78,11 +78,15 @@ const stepMm = (cam: CamCal) =>
  *  ponytail: fixed for a 12" mat; make it a rig setting if longer media show up. */
 export const FEED_LIMIT_MM = 300
 const feedOf = (p: Pt) => (CARRIAGE_AXIS === 'y' ? p.x : p.y)
+/** Where the head may go: the carriage between its origin (the frame) and the soft limit (the camera
+ *  bracket), the feed up to the feed limit. Behind the feed origin is fine - the mat backs out a
+ *  little (operator-confirmed on the SK-720T, 2026-11-17). */
 const reachable = (p: Pt, limitMm: number) =>
-  p.x >= 0 && p.y >= 0 && feedOf(p) <= FEED_LIMIT_MM && !beyondSoftLimit(p, limitMm)
-/** The reachable point nearest `p`. */
+  feedOf(p) <= FEED_LIMIT_MM && (CARRIAGE_AXIS === 'y' ? p.y : p.x) >= 0 && !beyondSoftLimit(p, limitMm)
+/** The reachable point nearest `p`. A mark past a limit is looked at from there, off-center - the
+ *  calibrated camera matrix maps the offset. */
 function clampReach(p: Pt, limitMm: number): Pt {
-  const feed = Math.min(Math.max(feedOf(p), 0), FEED_LIMIT_MM)
+  const feed = Math.min(feedOf(p), FEED_LIMIT_MM)
   const carriage = Math.min(Math.max(CARRIAGE_AXIS === 'y' ? p.y : p.x, 0), limitMm)
   return onAxes(carriage, feed)
 }
@@ -94,13 +98,8 @@ function whyOut(p: Pt, limitMm: number): string {
   const C = CARRIAGE_AXIS === 'y' ? 'Y' : 'X'
   if (carriage > limitMm) return `${(carriage - limitMm).toFixed(1)} mm past the soft limit (${C} ${limitMm} mm)`
   if (feed > FEED_LIMIT_MM) return `${(feed - FEED_LIMIT_MM).toFixed(1)} mm past the feed limit (${F} ${FEED_LIMIT_MM} mm)`
-  if (feed < 0) return `${(-feed).toFixed(1)} mm behind the origin in ${F} (feed)`
   return `${(-carriage).toFixed(1)} mm behind the origin in ${C} (carriage)`
 }
-/** How far past a limit a mark may lie and still be wholly in view from the limit (a square printed
- *  right at the origin, a slightly skewed sheet's far corner). Such a mark is measured off-center
- *  from the limit - the calibrated camera matrix maps the offset; the head never crosses. */
-const edgeMm = (cam: CamCal) => Math.max(0, (Math.min(cam.w, cam.h) * mmPerPx(cam.m) - MARK_SPAN_MM) / 2)
 
 /** Wait out the move, then return the first frame that matches its predecessor. */
 export async function settle(io: RigIO, distMm: number): Promise<Frame> {
@@ -162,23 +161,21 @@ export async function measureMark(
   kind: Detected['kind'],
   limitMm: number,
 ): Promise<Pt> {
-  // A mark further out can never be measured - say so before touring the looks around it.
-  // ponytail: a partner guess just past the edge band gives up even if its mark lies just inside.
-  const outOfReach = (p: Pt) => dist(p, clampReach(p, limitMm)) > edgeMm(cam)
-  if (outOfReach(guess)) {
-    throw new MarkNotFound(
-      `The ${kind} mark near ${fmt(guess)} is out of reach: ${whyOut(guess, limitMm)}.`,
-    )
-  }
   const s = stepMm(cam)
   let hit: Pt | null = null
+  const looked: Pt[] = []
   for (const [i, j] of SPIRAL) {
-    const t = { x: guess.x + i * s, y: guess.y + j * s }
-    if (outOfReach(t)) continue
-    hit = (await look(io, cam, clampReach(t, limitMm), kind))?.at ?? null
+    // Looks past a limit collapse onto the limit; each spot once.
+    const t = clampReach({ x: guess.x + i * s, y: guess.y + j * s }, limitMm)
+    if (looked.some((l) => dist(l, t) < s / 2)) continue
+    looked.push(t)
+    hit = (await look(io, cam, t, kind))?.at ?? null
     if (hit) break
   }
-  if (!hit) throw new MarkNotFound(`No ${kind} mark near ${fmt(guess)}.`)
+  if (!hit) {
+    const out = reachable(guess, limitMm) ? '' : ` It lies ${whyOut(guess, limitMm)}.`
+    throw new MarkNotFound(`No ${kind} mark near ${fmt(guess)}.${out}`)
+  }
   // Each round looks from the last estimate (clamped into reach) until the estimate stops moving.
   let p: Pt = hit
   for (let i = 0; i < CENTER_ROUNDS; i++) {

@@ -200,12 +200,10 @@ export const useRegistration = create<RegistrationStore>((set, get) => {
       act(async (io) => {
         const from = io.at() ?? ORIGIN
         const to = { x: from.x + dx, y: from.y + dy }
-        // The search never goes below the origin, so a mark jogged to out there can't be measured.
-        // Only moves further out are refused - a head already out there can come back.
-        if ((dx < 0 && to.x < 0) || (dy < 0 && to.y < 0)) {
-          throw new RegistrationError(
-            `(${to.x.toFixed(1)}, ${to.y.toFixed(1)}) is out of reach - X and Y stay at or above the origin. Move the cutter's origin instead.`,
-          )
+        // Below the carriage origin the head hits the frame. Only moves further out are refused - a
+        // head already out there can come back. The feed may run behind its origin.
+        if (dy < 0 && to.y < 0) {
+          throw new RegistrationError(`Y ${to.y.toFixed(1)} is below the origin - the head would hit the frame.`)
         }
         await io.moveTo(to)
         await settle(io, Math.hypot(dx, dy)) // the frame once the head is still
