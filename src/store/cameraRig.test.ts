@@ -34,6 +34,11 @@ describe('loadRig', () => {
     expect(o.status === 'ok' && o.value.knifeOffset).toEqual({ x: 0, y: 0 })
   })
 
+  it('reads the old topRight / bottomLeft mark names', () => {
+    const o = loadRig({ marks: { square: { x: 1, y: 2 }, topRight: { x: 3, y: 2 }, bottomLeft: { x: 1, y: 4 } } })
+    expect(o.status === 'ok' && o.value.marks).toEqual({ square: { x: 1, y: 2 }, cornerX: { x: 3, y: 2 }, cornerY: { x: 1, y: 4 } })
+  })
+
   it('refuses a newer schema', () => expect(loadRig({ schemaVersion: 2 }).status).toBe('unsupported'))
 })
 

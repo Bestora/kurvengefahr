@@ -5,6 +5,10 @@ import {
   PROXIES_AT_HOME_MARKS,
   applyAffine,
   checkRegistration,
+  cornerSides,
+  markNames,
+  mirrorLayout,
+  moveLayout,
   previewOrientation,
   testCutGeometry,
   withOffset,
@@ -76,5 +80,24 @@ describe("previewOrientation", () => {
   it("leaves an already upright camera alone", () => {
     // image +x = head right (-Y), image +y = toward the operator (-X)
     expect(previewOrientation([0, -0.08, -0.08, 0])).toEqual([1, 0, 0, 1]);
+  });
+});
+
+describe("mark layout sides", () => {
+  const L = PROXIES_AT_HOME_MARKS;
+  it("mirrors across the square and renames the corners", () => {
+    const f = mirrorLayout(mirrorLayout(L, "x"), "y");
+    expect(cornerSides(L)).toEqual({ x: "right", y: "below" });
+    expect(cornerSides(f)).toEqual({ x: "left", y: "above" });
+    expect(f.square).toEqual(L.square);
+    expect(f.cornerX.x).toBeCloseTo(2 * L.square.x - L.cornerX.x);
+    expect(f.cornerY.y).toBeCloseTo(2 * L.square.y - L.cornerY.y);
+    expect(markNames(L)).toEqual({ square: "square", cornerX: "top-right corner", cornerY: "bottom-left corner" });
+    expect(markNames(f)).toEqual({ square: "square", cornerX: "bottom-left corner", cornerY: "top-right corner" });
+  });
+  it("moves every mark with the square", () => {
+    const m = moveLayout(L, { x: L.square.x + 10, y: L.square.y - 5 });
+    expect(m.cornerX.x).toBeCloseTo(L.cornerX.x + 10);
+    expect(m.cornerY.y).toBeCloseTo(L.cornerY.y - 5);
   });
 });

@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest'
-import { PROXIES_AT_HOME_MARKS as L, applyAffine, type MarkLayout } from '../../core/registration'
+import { PROXIES_AT_HOME_MARKS as L, applyAffine, mirrorLayout, moveLayout, type MarkLayout } from '../../core/registration'
 import { initWasmForTests } from '../../core/wasm/nodeTestInit'
 import type { Affine, CamMatrix, Detected, Pt } from '../../core/wasm/registration'
 import type { CamCal, CameraRig } from '../../store/cameraRig'
@@ -10,6 +10,7 @@ import {
   CONVERGE_MM,
   RegistrationError,
   calibrateCamera,
+  findSquare,
   measureMark,
   registerSheet,
   settle,
@@ -25,7 +26,7 @@ beforeAll(async () => {
 const J: CamMatrix = [0.004, 0.1, 0.1, -0.004]
 const cam: CamCal = { m: J, w: 400, h: 300 }
 const LIMIT = 490.75
-const KEYS = ['square', 'topRight', 'bottomLeft'] as const
+const KEYS = ['square', 'cornerX', 'cornerY'] as const
 
 interface World {
   marks: { kind: Detected['kind']; at: Pt }[] // machine mm
@@ -85,24 +86,23 @@ const dist = (p: Pt, q: Pt) => Math.hypot(p.x - q.x, p.y - q.y)
 
 /** Page -> machine: rotate `deg`, scale `k`, square at `square`. `alongCarriage`: page x runs
  * along the carriage (machine y) - a mirror; otherwise page x runs along the feed. */
-function placed(deg: number, alongCarriage: boolean, square: Pt, k = 1): Affine {
+function placed(deg: number, alongCarriage: boolean, square: Pt, k = 1, S = L.square): Affine {
   const s = k * Math.sin((deg * Math.PI) / 180)
   const c = k * Math.cos((deg * Math.PI) / 180)
   const [p, q, r, t] = alongCarriage ? [-s, c, c, s] : [c, -s, s, c]
-  const S = L.square
   return [p, q, square.x - p * S.x - q * S.y, r, t, square.y - r * S.x - t * S.y]
 }
 
-function sheet(m: Affine) {
+function sheet(m: Affine, l: MarkLayout = L) {
   const truth: MarkLayout = {
-    square: applyAffine(m, L.square),
-    topRight: applyAffine(m, L.topRight),
-    bottomLeft: applyAffine(m, L.bottomLeft),
+    square: applyAffine(m, l.square),
+    cornerX: applyAffine(m, l.cornerX),
+    cornerY: applyAffine(m, l.cornerY),
   }
   const marks: World['marks'] = [
     { kind: 'square', at: truth.square },
-    { kind: 'corner', at: truth.topRight },
-    { kind: 'corner', at: truth.bottomLeft },
+    { kind: 'corner', at: truth.cornerX },
+    { kind: 'corner', at: truth.cornerY },
   ]
   return { truth, marks }
 }
@@ -118,9 +118,9 @@ const rig = (over: Partial<CameraRig> = {}): CameraRig => ({
   ...over,
 })
 
-function expectRegistered(r: { affine: Affine; marks: MarkLayout }, truth: MarkLayout) {
+function expectRegistered(r: { affine: Affine; marks: MarkLayout }, truth: MarkLayout, page = L) {
   for (const k of KEYS) {
-    expect(dist(applyAffine(r.affine, L[k]), truth[k])).toBeLessThan(0.1)
+    expect(dist(applyAffine(r.affine, page[k]), truth[k])).toBeLessThan(0.1)
     expect(dist(r.marks[k], truth[k])).toBeLessThan(0.1)
   }
 }
@@ -192,12 +192,22 @@ describe('registerSheet', () => {
     expectRegistered(await registerSheet(io, rig({ lastAffine: m }), () => {}), truth)
   })
 
+  it('finds a sheet whose corners lie left of and above the square', async () => {
+    // A4 template flipped both ways: the front row holds only the upper corner, its square lies along the feed.
+    const flipped = moveLayout(mirrorLayout(mirrorLayout(L, 'x'), 'y'), { x: 297 - L.square.x, y: 210 - L.square.y })
+    const m = placed(0.6, true, { x: 200, y: 300 }, 1, flipped.square)
+    const { truth, marks } = sheet(m, flipped)
+    const { io } = fakeIO(world(marks))
+    const r = await registerSheet(io, rig({ marks: flipped }), () => {})
+    expectRegistered(r, truth, flipped)
+  })
+
   it('uses the last positions first', async () => {
     const { truth, marks } = SKEWED
     const lastMarks = {
       square: { x: truth.square.x + 1.5, y: truth.square.y - 1 },
-      topRight: { x: truth.topRight.x - 1, y: truth.topRight.y + 2 },
-      bottomLeft: { x: truth.bottomLeft.x + 0.5, y: truth.bottomLeft.y + 1 },
+      cornerX: { x: truth.cornerX.x - 1, y: truth.cornerX.y + 2 },
+      cornerY: { x: truth.cornerY.x + 0.5, y: truth.cornerY.y + 1 },
     }
     const { io, moves } = fakeIO(world(marks))
     expectRegistered(await registerSheet(io, rig({ lastMarks }), () => {}), truth)
@@ -207,7 +217,7 @@ describe('registerSheet', () => {
   it('falls back to the full search when the sheet moved', async () => {
     const { truth, marks } = SKEWED
     const shift = (p: Pt) => ({ x: p.x, y: p.y + 80 })
-    const lastMarks = { square: shift(truth.square), topRight: shift(truth.topRight), bottomLeft: shift(truth.bottomLeft) }
+    const lastMarks = { square: shift(truth.square), cornerX: shift(truth.cornerX), cornerY: shift(truth.cornerY) }
     const status: string[] = []
     const { io } = fakeIO(world(marks))
     expectRegistered(await registerSheet(io, rig({ lastMarks }), (m) => status.push(m)), truth)
@@ -217,7 +227,7 @@ describe('registerSheet', () => {
   it('starts from a mark the operator jogged into view', async () => {
     const { truth, marks } = SKEWED
     const status: string[] = []
-    const { io, moves } = fakeIO(world(marks, { head: { x: truth.topRight.x + 3, y: truth.topRight.y - 4 } }))
+    const { io, moves } = fakeIO(world(marks, { head: { x: truth.cornerX.x + 3, y: truth.cornerX.y - 4 } }))
     expectRegistered(await registerSheet(io, rig(), (m) => status.push(m)), truth)
     expect(status).not.toContain('Searching for the first mark…')
     expect(moves.length).toBeLessThanOrEqual(9)
@@ -226,9 +236,9 @@ describe('registerSheet', () => {
   it('starts from the jogged mark when the last positions are stale', async () => {
     const { truth, marks } = SKEWED
     const shift = (p: Pt) => ({ x: p.x, y: p.y + 80 })
-    const lastMarks = { square: shift(truth.square), topRight: shift(truth.topRight), bottomLeft: shift(truth.bottomLeft) }
+    const lastMarks = { square: shift(truth.square), cornerX: shift(truth.cornerX), cornerY: shift(truth.cornerY) }
     const status: string[] = []
-    const { io } = fakeIO(world(marks, { head: { x: truth.topRight.x + 3, y: truth.topRight.y - 4 } }))
+    const { io } = fakeIO(world(marks, { head: { x: truth.cornerX.x + 3, y: truth.cornerX.y - 4 } }))
     expectRegistered(await registerSheet(io, rig({ lastMarks }), (m) => status.push(m)), truth)
     expect(status).not.toContain('Searching for the first mark…')
   })
@@ -295,5 +305,23 @@ describe('calibrateCamera', () => {
       return detect(f, s).map((m) => ({ ...m, x: m.x + jx, y: m.y + jy }))
     }
     await expect(calibrateCamera(io, { x: 0, y: 0 })).rejects.toThrow(/camera on the head/)
+  })
+})
+
+describe('findSquare', () => {
+  it('sweeps along Y and stops centered on the square', async () => {
+    const sq = { x: 6, y: 123 }
+    const { io } = fakeIO(world([{ kind: 'square', at: sq }]))
+    const status: string[] = []
+    const p = await findSquare(io, { x: 0, y: 0 }, LIMIT, (m) => status.push(m))
+    expect(Math.abs(p.y - sq.y)).toBeLessThan(4)
+    expect(status.some((m) => m.startsWith('Found the square'))).toBe(true)
+    const cal = await calibrateCamera(io, p)
+    cal.m.forEach((v, i) => expect(Math.abs(v - J[i])).toBeLessThan(1e-6))
+  })
+
+  it('says so when no square lies along Y', async () => {
+    const { io } = fakeIO(world([]))
+    await expect(findSquare(io, { x: 0, y: 0 }, 40, () => {})).rejects.toThrow(/No square found/)
   })
 })

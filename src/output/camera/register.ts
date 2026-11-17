@@ -4,7 +4,7 @@
 // goes through `RigIO` (the store wires HeadHold + HTTP capture + WASM detection), so the whole flow
 // runs against a simulated world in the tests. The cutter never reports its position: "head" is
 // always the last commanded target.
-import { checkRegistration, type MarkLayout } from '../../core/registration'
+import { checkRegistration, markNames, type MarkLayout } from '../../core/registration'
 import { affineStrain, fitCamera, solveAffine, type Affine, type CamMatrix, type Detected, type Pt } from '../../core/wasm/registration'
 import type { CamCal, CameraRig } from '../../store/cameraRig'
 import { beyondSoftLimit, CARRIAGE_AXIS } from '../hpgl/softLimit'
@@ -32,6 +32,8 @@ const CENTER_ROUNDS = 3
 /** Search step as a fraction of the shorter image side, so neighbouring views overlap. */
 const STEP_OF_VIEW = 0.8
 const SEARCH_ROWS = 4
+/** Feed spacing of the search rows - finer than the view so a mark at a row's edge is not missed. */
+const ROW_FEED_MM = 5
 /** A square-to-corner distance names the corner when within this fraction of the layout's. */
 const DIST_TOL = 0.02
 /** Probe move for the camera calibration. */
@@ -51,16 +53,12 @@ export interface SheetResult {
   warning: string | null
 }
 
-type Corner = 'topRight' | 'bottomLeft'
-const LABEL: Record<keyof MarkLayout, string> = {
-  square: 'square',
-  topRight: 'top-right corner',
-  bottomLeft: 'bottom-left corner',
-}
+type Corner = 'cornerX' | 'cornerY'
 const ORIGIN: Pt = { x: 0, y: 0 }
 const add = (a: Pt, b: Pt, k = 1): Pt => ({ x: a.x + k * b.x, y: a.y + k * b.y })
 const sub = (a: Pt, b: Pt): Pt => ({ x: a.x - b.x, y: a.y - b.y })
 const dist = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y)
+const cap = (t: string) => t[0].toUpperCase() + t.slice(1)
 const fmt = (p: Pt) => `(${p.x.toFixed(1)}, ${p.y.toFixed(1)})`
 /** A point from carriage-axis and feed-axis coordinates. */
 const onAxes = (carriage: number, feed: number): Pt =>
@@ -183,27 +181,32 @@ export async function registerSheet(
   // before the fast path moves the head away.
   const held = io.at()
   const jogged = held ? markIn(io, cam, await settle(io, 0), held, null) : null
+  if (held) onStatus(jogged ? `A ${jogged.kind} mark is under the camera at ${fmt(jogged.at)}.` : 'No mark under the camera.')
   let found: MarkLayout | null = null
   if (lastMarks) {
     // Fast path: the next sheet usually lies where the last one did.
-    const measure = (k: keyof MarkLayout) => {
-      onStatus(`Measuring ${LABEL[k]}…`)
-      return measureMark(io, cam, lastMarks[k], k === 'square' ? 'square' : 'corner', rig.softLimitMm)
+    onStatus('Looking where the last sheet was…')
+    const measure = async (k: keyof MarkLayout) => {
+      onStatus(`Measuring ${markNames(page)[k]}…`)
+      const p = await measureMark(io, cam, lastMarks[k], k === 'square' ? 'square' : 'corner', rig.softLimitMm)
+      onStatus(`${cap(markNames(page)[k])} at ${fmt(p)}.`)
+      return p
     }
     try {
       found = {
         square: await measure('square'),
-        topRight: await measure('topRight'),
-        bottomLeft: await measure('bottomLeft'),
+        cornerX: await measure('cornerX'),
+        cornerY: await measure('cornerY'),
       }
     } catch (e) {
       if (!(e instanceof RegistrationError)) throw e
+      onStatus(`Not where the last sheet was: ${e.message}`)
     }
   }
   found ??= await search(io, cam, rig, jogged, onStatus)
   const affine = solveAffine(
-    [page.square, page.topRight, page.bottomLeft],
-    [found.square, found.topRight, found.bottomLeft],
+    [page.square, page.cornerX, page.cornerY],
+    [found.square, found.cornerX, found.cornerY],
   )
   if (!affine) throw new RegistrationError('The marks lie on one line - check the mark layout.')
   const { error, warning } = checkRegistration(affine, rig.lastAffine)
@@ -225,68 +228,78 @@ async function search(
     const s = stepMm(cam)
     // ponytail: four search rows from feed 0 - extend when sheets lie further back.
     rows: for (let k = 0; k < SEARCH_ROWS; k++) {
+      onStatus(`Sweeping row ${k + 1} of ${SEARCH_ROWS} along Y (feed ${k * ROW_FEED_MM} mm, every ${s.toFixed(1)} mm)…`)
       for (let c = 0; c <= lim; c += s) {
-        first = await look(io, cam, onAxes(c, k * s), null)
+        first = await look(io, cam, onAxes(c, k * ROW_FEED_MM), null)
         if (first) break rows
       }
     }
   }
   if (!first) throw new RegistrationError('No mark found - jog the camera over a mark and try again.')
-  onStatus('Measuring the first mark…')
+  onStatus(`Found a ${first.kind} mark near ${fmt(first.at)} - centering it…`)
   const m1 = await measureMark(io, cam, first.at, first.kind, lim)
+  onStatus(`First mark (${first.kind}) at ${fmt(m1)}.`)
 
-  // Second mark: the square's partner along the carriage axis, named by its distance.
+  // Second mark: the square's partner along the carriage axis (or the feed axis, when the first mark
+  // is a corner on the far side of the square), named by its distance.
   const pageDist: Record<Corner, number> = {
-    topRight: dist(page.topRight, page.square),
-    bottomLeft: dist(page.bottomLeft, page.square),
+    cornerX: dist(page.cornerX, page.square),
+    cornerY: dist(page.cornerY, page.square),
   }
-  const along = onAxes(1, 0)
   const partner = first.kind === 'square' ? 'corner' : 'square'
   onStatus('Searching for the second mark…')
   let pair: { square: Pt; corner: Pt; which: Corner } | null = null
   let offDist: number | null = null
   // Guesses: from the last accepted sheet's scale and rotation first (prints are often a few % small,
-  // which puts a corner 5 mm off the layout distance), then the layout distance along the carriage.
+  // which puts a corner 5 mm off the layout distance), then the layout distance along the carriage,
+  // then along the feed. Unreachable guesses cost no moves.
   const guesses: Pt[] = []
   if (rig.lastAffine) {
     const [a, b, , d, e] = rig.lastAffine
     const lin = (v: Pt): Pt => ({ x: a * v.x + b * v.y, y: d * v.x + e * v.y })
-    for (const k of ['topRight', 'bottomLeft'] as const) {
+    for (const k of ['cornerX', 'cornerY'] as const) {
       const v = sub(page[k], page.square)
       guesses.push(add(m1, lin(first.kind === 'square' ? v : { x: -v.x, y: -v.y }), 1))
     }
   }
-  for (const d of [pageDist.topRight, -pageDist.topRight, pageDist.bottomLeft, -pageDist.bottomLeft])
-    guesses.push(add(m1, along, d))
+  for (const along of [onAxes(1, 0), onAxes(0, 1)])
+    for (const d of [pageDist.cornerX, -pageDist.cornerX, pageDist.cornerY, -pageDist.cornerY])
+      guesses.push(add(m1, along, d))
   for (const g of guesses) {
+    onStatus(`Looking for the ${partner} near ${fmt(g)}…`)
     const m2 = await tryMeasure(io, cam, g, partner, lim)
-    if (!m2) continue
+    if (!m2) {
+      onStatus(`No ${partner} there.`)
+      continue
+    }
     const got = dist(m1, m2)
     const fits = (k: Corner) => Math.abs(got / pageDist[k] - 1) <= DIST_TOL
-    const which: Corner | null = fits('topRight') ? 'topRight' : fits('bottomLeft') ? 'bottomLeft' : null
+    const which: Corner | null = fits('cornerX') ? 'cornerX' : fits('cornerY') ? 'cornerY' : null
     if (!which) {
+      onStatus(`A ${partner} at ${fmt(m2)} is ${got.toFixed(1)} mm away - not the layout's ${pageDist.cornerX.toFixed(1)} or ${pageDist.cornerY.toFixed(1)} mm, skipped.`)
       offDist ??= got
       continue
     }
+    onStatus(`${cap(markNames(page)[which])} pairs with the square (${got.toFixed(1)} mm apart).`)
     pair = first.kind === 'square' ? { square: m1, corner: m2, which } : { square: m2, corner: m1, which }
     break
   }
   if (!pair) {
     throw new RegistrationError(
       offDist === null
-        ? `Found a ${first.kind} mark but no partner along the carriage - align a sheet edge with the carriage.`
-        : `The second mark is ${offDist.toFixed(1)} mm from the first; the layout says ${pageDist.topRight.toFixed(1)} or ${pageDist.bottomLeft.toFixed(1)} mm - wrong mark or the scale is off.`,
+        ? `Found a ${first.kind} mark but no partner along the carriage or the feed - align a sheet edge with the carriage.`
+        : `The second mark is ${offDist.toFixed(1)} mm from the first; the layout says ${pageDist.cornerX.toFixed(1)} or ${pageDist.cornerY.toFixed(1)} mm - wrong mark or the scale is off.`,
     )
   }
 
   // Third mark: off the square, perpendicular to the known corner, at the measured scale.
   const { square, corner, which } = pair
-  const missing: Corner = which === 'topRight' ? 'bottomLeft' : 'topRight'
+  const missing: Corner = which === 'cornerX' ? 'cornerY' : 'cornerX'
   const known = sub(corner, square)
   const len = Math.hypot(known.x, known.y)
   const normal = { x: -known.y / len, y: known.x / len }
   const reach = (pageDist[missing] * len) / pageDist[which]
-  onStatus(`Measuring ${LABEL[missing]}…`)
+  onStatus(`Measuring ${markNames(page)[missing]}…`)
   // Which side: the page's turn from the known corner to the missing one, flipped when page ->
   // machine mirrors. Never probe the other side - that can feed the mat out.
   // ponytail: with no accepted sheet yet, assume mirrored - a face-up sheet whose x runs along the
@@ -299,11 +312,44 @@ async function search(
   const target = add(square, normal, sign * reach)
   const m3 = await tryMeasure(io, cam, target, 'corner', lim)
   if (m3) {
-    return which === 'topRight' ? { square, topRight: corner, bottomLeft: m3 } : { square, topRight: m3, bottomLeft: corner }
+    onStatus(`${cap(markNames(page)[missing])} at ${fmt(m3)}.`)
+    return which === 'cornerX' ? { square, cornerX: corner, cornerY: m3 } : { square, cornerX: m3, cornerY: corner }
   }
   throw new RegistrationError(
-    `The ${LABEL[missing]} mark was not found near ${fmt(target)} - it may be out of reach (negative or past the feed limit); move the origin so the whole sheet lies at positive coordinates.`,
+    `The ${markNames(page)[missing]} mark was not found near ${fmt(target)} - it may be out of reach (negative or past the feed limit); move the origin so the whole sheet lies at positive coordinates.`,
   )
+}
+
+/** Sweep pitch before calibration: the scale is unknown, so a fixed step well under the smallest
+ *  view (~19 mm on the SK-720T) minus the square. */
+const FIND_STEP_MM = 4
+
+/** Head position with the square in view, centered along the carriage. Looks at `start` first,
+ *  then sweeps rows along the carriage from feed `start`, stepping on while the square stays in
+ *  view and returning the middle of that run.
+ *  ponytail: not centered along the feed - a square at the feed edge can drop out of a probe; the
+ *  calibration then asks for a jog. */
+export async function findSquare(io: RigIO, start: Pt, limitMm: number, onStatus: (msg: string) => void): Promise<Pt> {
+  const sees = async (p: Pt) => io.detect(await goTo(io, p), 0).some((m) => m.kind === 'square')
+  if (await sees(start)) {
+    onStatus('Square under the camera.')
+    return start
+  }
+  const feed0 = feedOf(start)
+  for (let k = 0; k < SEARCH_ROWS; k++) {
+    const feed = feed0 + k * FIND_STEP_MM
+    onStatus(`No square yet - sweeping row ${k + 1} of ${SEARCH_ROWS} along Y (feed ${feed.toFixed(0)} mm, every ${FIND_STEP_MM} mm)…`)
+    for (let c = 0; c <= limitMm; c += FIND_STEP_MM) {
+      const p = onAxes(c, feed)
+      if (!reachable(p, limitMm) || !(await sees(p))) continue
+      let end = c
+      while (end + FIND_STEP_MM <= limitMm && (await sees(onAxes(end + FIND_STEP_MM, feed)))) end += FIND_STEP_MM
+      const mid = onAxes((c + end) / 2, feed)
+      onStatus(`Found the square between Y ${c} and ${end} mm - calibrating at ${fmt(mid)}…`)
+      return mid
+    }
+  }
+  throw new RegistrationError('No square found along Y - jog the camera over the square and try again.')
 }
 
 /** px -> mm matrix from three looks at the square: at `start`, then PROBE_MM along x and along y. */

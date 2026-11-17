@@ -27,7 +27,7 @@ export function RegistrationMarksLayer({ pxPerMm }: { pxPerMm: number }) {
         stroke={COLOR}
         strokeWidth={sw}
       />
-      {[marks.topRight, marks.bottomLeft].map((p, i) => (
+      {[marks.cornerX, marks.cornerY].map((p, i) => (
         <Group key={i} x={p.x} y={p.y}>
           <Line points={[-h, 0, h, 0]} stroke={COLOR} strokeWidth={sw} />
           <Line points={[0, -h, 0, h]} stroke={COLOR} strokeWidth={sw} />

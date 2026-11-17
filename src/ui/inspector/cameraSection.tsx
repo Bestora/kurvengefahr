@@ -2,7 +2,15 @@
 // cut, knife offset, soft limit and the mark layout. All actions live in `store/registration`;
 // they need the port, and refuse while a plot runs or another action is busy.
 import { useState } from 'react'
-import { PROXIES_AT_HOME_MARKS, previewOrientation, type MarkLayout } from '../../core/registration'
+import {
+  PROXIES_AT_HOME_MARKS,
+  cornerSides,
+  markNames,
+  mirrorLayout,
+  moveLayout,
+  previewOrientation,
+  type MarkLayout,
+} from '../../core/registration'
 import { affineStrain } from '../../core/wasm/registration'
 import { useCameraRig } from '../../store/cameraRig'
 import { usePlotSession } from '../../store/plotSession'
@@ -11,7 +19,7 @@ import { useSerial } from '../../store/serial'
 import { Banner, Button, Disclosure, Field, IconButton, SectionTitle, controlClass } from '../primitives'
 import { Num } from './controls'
 
-const STEPS = [1, 5, 20]
+const STEPS = [1, 5, 20, 50]
 const NEEDS_PORT = 'Connect the cutter first'
 const NEEDS_URL = 'Enter the camera URL first'
 
@@ -33,8 +41,17 @@ export function CameraRegistrationSection() {
     setUrlDraft(null)
   }
   const marks = rig.marks
+  // The square carries the whole layout along; a corner moves alone.
   const setMark = (k: keyof MarkLayout, axis: 'x' | 'y', v: number) =>
-    rig.patch({ marks: { ...marks, [k]: { ...marks[k], [axis]: v } } })
+    rig.patch({
+      marks:
+        k === 'square'
+          ? moveLayout(marks, { ...marks.square, [axis]: v })
+          : { ...marks, [k]: { ...marks[k], [axis]: v } },
+    })
+  const sides = cornerSides(marks)
+  const names = markNames(marks)
+  const cap = (t: string) => t[0].toUpperCase() + t.slice(1)
   const strain = reg.affine ? affineStrain(reg.affine) : null
   const mmPerPx = rig.cam ? Math.sqrt(Math.abs(rig.cam.m[0] * rig.cam.m[3] - rig.cam.m[1] * rig.cam.m[2])) : null
   const stale = !!rig.cam && !!frameSize && (rig.cam.w !== frameSize.w || rig.cam.h !== frameSize.h)
@@ -127,12 +144,16 @@ export function CameraRegistrationSection() {
       <div className="mt-2 flex flex-wrap gap-2">
         <Button
           disabled={!act}
-          title={portTitle('Put the square mark under the camera first')}
+          title={portTitle('Only needed again after moving the camera or changing its resolution. Teaches the app the camera scale: finds the square (under the camera, else by sweeping along Y), then moves 3 mm in X and Y and watches it shift')}
           onClick={() => void reg.calibrate()}
         >
           Calibrate camera
         </Button>
-        <Button disabled={!act} title={portTitle('Find and measure the sheet’s marks')} onClick={() => void reg.measure()}>
+        <Button
+          disabled={!act}
+          title={portTitle(rig.cam ? 'Find and measure the sheet’s marks' : 'Calibrates the camera first, then finds and measures the sheet’s marks')}
+          onClick={() => void reg.measure()}
+        >
           Measure sheet
         </Button>
         {busy && <Button onClick={reg.cancel}>Cancel</Button>}
@@ -147,7 +168,16 @@ export function CameraRegistrationSection() {
           Camera: {mmPerPx.toFixed(3)} mm/px{stale && ' - Recalibrate - the camera resolution changed'}
         </p>
       )}
-      {reg.message && <p className="mt-1 text-xs text-muted">{reg.message}</p>}
+      {reg.log.length > 0 && (
+        <ol className="mt-1 max-h-40 overflow-y-auto text-xs text-muted">
+          {reg.log.map((l, i) => (
+            <li key={i}>{l}</li>
+          ))}
+        </ol>
+      )}
+      {reg.message && (
+        <p className={`mt-1 text-xs ${reg.phase === 'error' ? 'text-accent-text' : 'text-muted'}`}>{reg.message}</p>
+      )}
       {strain && (
         <p className="mt-1 text-xs text-muted">
           Rotation {strain.rotDeg.toFixed(2)} deg, scale {strain.sx.toFixed(3)} x {strain.sy.toFixed(3)}, shear{' '}
@@ -168,12 +198,35 @@ export function CameraRegistrationSection() {
         value={rig.softLimitMm} step={0.25} onChange={(v) => v > 0 && rig.patch({ softLimitMm: v })} />
 
       <Disclosure label="Mark layout">
-        {(['square', 'topRight', 'bottomLeft'] as const).map((k) => (
+        <Field label="Horizontal corner" title="The corner mark level with the square: right or left of it">
+          <select
+            className={controlClass}
+            value={sides.x}
+            onChange={(e) => e.target.value !== sides.x && rig.patch({ marks: mirrorLayout(marks, 'x') })}
+          >
+            <option value="right">Right of the square</option>
+            <option value="left">Left of the square</option>
+          </select>
+        </Field>
+        <Field label="Vertical corner" title="The corner mark in line with the square: below or above it">
+          <select
+            className={controlClass}
+            value={sides.y}
+            onChange={(e) => e.target.value !== sides.y && rig.patch({ marks: mirrorLayout(marks, 'y') })}
+          >
+            <option value="below">Below the square</option>
+            <option value="above">Above the square</option>
+          </select>
+        </Field>
+        {(['square', 'cornerX', 'cornerY'] as const).map((k) => (
           <div key={k}>
-            <Num label={`${k} X (mm)`} value={marks[k].x} step={0.1} onChange={(v) => setMark(k, 'x', v)} />
-            <Num label={`${k} Y (mm)`} value={marks[k].y} step={0.1} onChange={(v) => setMark(k, 'y', v)} />
+            <Num label={`${cap(names[k])} X (mm)`} value={marks[k].x} step={0.1} onChange={(v) => setMark(k, 'x', v)} />
+            <Num label={`${cap(names[k])} Y (mm)`} value={marks[k].y} step={0.1} onChange={(v) => setMark(k, 'y', v)} />
           </div>
         ))}
+        <p className="text-xs text-muted">
+          Switching a side mirrors the corners across the square. Moving the square moves all three marks.
+        </p>
         <Button className="mt-2 w-full" onClick={() => rig.patch({ marks: PROXIES_AT_HOME_MARKS })}>
           Reset to Proxies at Home
         </Button>

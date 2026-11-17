@@ -50,9 +50,10 @@ const pt = (v: unknown): Pt | null => (isObj(v) && fin(v.x) && fin(v.y) ? { x: v
 function layout(v: unknown): MarkLayout | null {
   if (!isObj(v)) return null
   const square = pt(v.square)
-  const topRight = pt(v.topRight)
-  const bottomLeft = pt(v.bottomLeft)
-  return square && topRight && bottomLeft ? { square, topRight, bottomLeft } : null
+  // Before the corners could sit on either side they were named topRight / bottomLeft.
+  const cornerX = pt(v.cornerX ?? v.topRight)
+  const cornerY = pt(v.cornerY ?? v.bottomLeft)
+  return square && cornerX && cornerY ? { square, cornerX, cornerY } : null
 }
 
 function camCal(v: unknown): CamCal | null {

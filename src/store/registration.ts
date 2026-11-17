@@ -9,7 +9,7 @@ import { create } from 'zustand'
 import { withOffset } from '../core/registration'
 import { affineStrain, findMarks, frameDiff, type Affine, type Pt } from '../core/wasm/registration'
 import { captureFrame } from '../output/camera/capture'
-import { calibrateCamera, registerSheet, RegistrationError, settle, type RigIO } from '../output/camera/register'
+import { calibrateCamera, findSquare, plausibleCam, registerSheet, RegistrationError, settle, type RigIO } from '../output/camera/register'
 import { HeadHold } from '../output/hpgl/headHold'
 import type { WebSerialTransport } from '../output/serial/transport'
 import { useCameraRig, type CameraRig } from './cameraRig'
@@ -22,8 +22,10 @@ export type RegPhase = 'idle' | 'busy' | 'ready' | 'error'
 interface RegistrationStore {
   phase: RegPhase
   affine: Affine | null
-  /** Status or error, English. */
+  /** Live status (where the head goes), then the outcome or error. English. */
   message: string | null
+  /** Steps of the running / last action, oldest first. */
+  log: string[]
   /** Series drift; cutting asks for confirmation first. */
   warning: string | null
   /** Object URL of the latest frame (the previous one is revoked). */
@@ -113,6 +115,7 @@ function rigIO(signal: AbortSignal): RigIO {
     at: () => hold?.at ?? null,
     moveTo: async (p) => {
       signal.throwIfAborted()
+      useRegistration.setState({ message: `Moving to (${p.x.toFixed(1)}, ${p.y.toFixed(1)})…` })
       await headHold().moveTo(p)
       signal.throwIfAborted() // cancel's home() superseded this move
       useSerial.getState().setHeadAway(true)
@@ -145,20 +148,31 @@ export const useRegistration = create<RegistrationStore>((set, get) => {
   const act = async (work: (io: RigIO) => Promise<string | null>) => {
     if (get().phase === 'busy' || usePlotSession.getState().phase !== 'idle') return
     const ctl = (abort = new AbortController())
-    set({ phase: 'busy', message: null })
+    set({ phase: 'busy', message: null, log: [] })
     try {
       const message = await work(rigIO(ctl.signal))
       set({ phase: get().affine ? 'ready' : 'idle', message })
     } catch (e) {
       const err = ctl.signal.aborted ? ctl.signal.reason : e
-      set({ phase: 'error', message: err instanceof Error ? err.message : String(err) })
+      set({ phase: 'error', message: `Failed: ${err instanceof Error ? err.message : String(err)}` })
     }
+  }
+
+  const note = (m: string) => set({ log: [...get().log, m] })
+  // The head stays on the square - a measure right after starts from that mark.
+  const calibrateHere = async (io: RigIO) => {
+    const at = await findSquare(io, io.at() ?? ORIGIN, useCameraRig.getState().softLimitMm, note)
+    const cam = await calibrateCamera(io, at)
+    useCameraRig.getState().patch({ cam })
+    const s = Math.sqrt(Math.abs(cam.m[0] * cam.m[3] - cam.m[1] * cam.m[2]))
+    return `Camera calibrated: ${s.toFixed(3)} mm/px, view ${(cam.w * s).toFixed(0)} x ${(cam.h * s).toFixed(0)} mm.`
   }
 
   return {
     phase: 'idle',
     affine: null,
     message: null,
+    log: [],
     warning: null,
     frameUrl: null,
 
@@ -166,7 +180,9 @@ export const useRegistration = create<RegistrationStore>((set, get) => {
       act(async (io) => {
         set({ affine: null, warning: null })
         try {
-          const r = await registerSheet(io, useCameraRig.getState(), (message) => set({ message }))
+          const { cam } = useCameraRig.getState()
+          if (!cam || !plausibleCam(cam)) note(await calibrateHere(io))
+          const r = await registerSheet(io, useCameraRig.getState(), note)
           useCameraRig.getState().patch({ lastMarks: r.marks, lastAffine: r.affine })
           set({ affine: r.affine, warning: r.warning })
           const s = affineStrain(r.affine)
@@ -177,12 +193,7 @@ export const useRegistration = create<RegistrationStore>((set, get) => {
         }
       }),
 
-    // The head stays where calibration left it - measuring starts from there.
-    calibrate: () =>
-      act(async (io) => {
-        useCameraRig.getState().patch({ cam: await calibrateCamera(io, io.at() ?? ORIGIN) })
-        return 'Camera calibrated.'
-      }),
+    calibrate: () => act(calibrateHere),
 
     jog: (dx, dy) =>
       act(async (io) => {
@@ -210,6 +221,6 @@ export const useRegistration = create<RegistrationStore>((set, get) => {
       void goHome()
     },
 
-    consume: () => set({ affine: null, warning: null, phase: 'idle', message: null }),
+    consume: () => set({ affine: null, warning: null, phase: 'idle', message: null, log: [] }),
   }
 })

@@ -6,17 +6,49 @@
 import type { Geometry, PenId } from "./types";
 import { affineStrain, type Affine, type CamMatrix, type Pt } from "./wasm/registration";
 
-/** Mark centroids in page mm (top-left origin). */
+/** Mark centroids in page mm (top-left origin). `cornerX` is the corner mark level with the square
+ *  (to its right or left), `cornerY` the one in line with it (below or above). */
 export interface MarkLayout {
   square: Pt;
-  topRight: Pt;
-  bottomLeft: Pt;
+  cornerX: Pt;
+  cornerY: Pt;
+}
+
+export type Side = "right" | "left" | "below" | "above";
+
+/** Which side of the square each corner mark lies on. */
+export function cornerSides(l: MarkLayout): { x: "right" | "left"; y: "below" | "above" } {
+  return { x: l.cornerX.x >= l.square.x ? "right" : "left", y: l.cornerY.y >= l.square.y ? "below" : "above" };
+}
+
+/** Every mark mirrored across the square along page `axis`: the corners swap sides. */
+export function mirrorLayout(l: MarkLayout, axis: "x" | "y"): MarkLayout {
+  const c = l.square[axis];
+  const m = (p: Pt): Pt => ({ ...p, [axis]: 2 * c - p[axis] });
+  return { square: l.square, cornerX: m(l.cornerX), cornerY: m(l.cornerY) };
+}
+
+/** The whole layout shifted so the square sits at `to`. */
+export function moveLayout(l: MarkLayout, to: Pt): MarkLayout {
+  const d = { x: to.x - l.square.x, y: to.y - l.square.y };
+  const m = (p: Pt): Pt => ({ x: p.x + d.x, y: p.y + d.y });
+  return { square: to, cornerX: m(l.cornerX), cornerY: m(l.cornerY) };
+}
+
+/** Sheet-corner names ("top-right corner") from where the marks sit relative to each other. */
+export function markNames(l: MarkLayout): Record<keyof MarkLayout, string> {
+  const s = cornerSides(l);
+  const h = s.x;
+  const v = s.y === "below" ? "bottom" : "top";
+  const notH = h === "right" ? "left" : "right";
+  const notV = v === "bottom" ? "top" : "bottom";
+  return { square: "square", cornerX: `${notV}-${h} corner`, cornerY: `${v}-${notH} corner` };
 }
 
 export const PROXIES_AT_HOME_MARKS: MarkLayout = {
   square: { x: 12.64, y: 12.65 },
-  topRight: { x: 284.92, y: 12.36 },
-  bottomLeft: { x: 12.36, y: 197.93 },
+  cornerX: { x: 284.92, y: 12.36 },
+  cornerY: { x: 12.36, y: 197.93 },
 };
 
 export const TEST_CUT_SIDE_MM = 7.99;

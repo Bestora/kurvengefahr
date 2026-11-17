@@ -148,7 +148,9 @@ with live streaming only.
 2. Set the *Soft limit*: the furthest carriage travel with the camera fitted. It applies to camera
    moves and to cut jobs, and only while a camera URL is set.
 3. Before the first search, check the carriage direction: *Jog* +Y must move the head left.
-4. Put the square mark under the camera and press *Calibrate camera*.
+4. Load a printed sheet and press *Calibrate camera*. It uses the square under the camera, or
+   sweeps along the carriage in rows to find it, then moves 3 mm along X and Y to learn the camera
+   scale. You can skip this step: *Measure sheet* calibrates first when there is no calibration.
 5. Open *Mark layout* if your template differs from the Proxies at Home sheet. *Horizontal
    corner* sets whether the corner mark level with the square lies right or left of it, *Vertical
    corner* whether the other one lies below or above it. Switching a side mirrors the corners
@@ -156,14 +158,18 @@ with live streaming only.
    marks. Fine-tune a single corner with its own X and Y.
 
 With a camera URL set, every live HP-GL cut is refused until the sheet is measured. Clear the URL
-for plain plotting. Recalibrate after changing the camera resolution.
+for plain plotting. Recalibrate after moving the camera or changing its resolution.
+
+While calibrating or measuring, the section lists each step (where it looks, what it found, why a
+mark was skipped), shows where the head is moving, and ends with the result or the reason it
+stopped.
 
 **Per sheet**
 
 1. Import the template SVG with *Keep original position*, so the artwork sits where the marks
    expect it.
 2. Load the printed sheet and press *Measure sheet*. The head searches for the three marks, centers
-   on each, and measures it. The first sheet scans the carriage; later sheets start where the marks
+   on each, and measures it. The first sheet scans the carriage in rows 5 mm apart; later sheets start where the marks
    were last time. To start from a different spot, jog onto a mark first.
 3. Optional, once after setup: run a *Test cut* (it needs a measured sheet). It cuts a 7.99 mm
    square 1 mm around the square mark. Measure the white rim left around the cut. Knife offset X
