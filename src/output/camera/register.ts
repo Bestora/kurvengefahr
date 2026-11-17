@@ -143,11 +143,18 @@ export async function measureMark(
 ): Promise<Pt> {
   const s = stepMm(cam)
   let hit: Pt | null = null
+  let looked = false
   for (const [i, j] of SPIRAL) {
     const t = { x: guess.x + i * s, y: guess.y + j * s }
     if (!reachable(t, limitMm)) continue
+    looked = true
     hit = (await look(io, cam, t, kind))?.at ?? null
     if (hit) break
+  }
+  if (!looked) {
+    throw new MarkNotFound(
+      `The ${kind} mark near ${fmt(guess)} is out of reach (negative or past a limit) - set the cutter's origin so the marks lie at positive X and Y.`,
+    )
   }
   if (!hit) throw new MarkNotFound(`No ${kind} mark near ${fmt(guess)}.`)
   let p: Pt = hit

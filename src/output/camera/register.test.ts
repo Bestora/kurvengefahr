@@ -243,6 +243,12 @@ describe('registerSheet', () => {
     expect(status).not.toContain('Searching for the first mark…')
   })
 
+  it('says when the mark lies below the origin', async () => {
+    const { io, moves } = fakeIO(world([{ kind: 'square', at: { x: -40, y: -60 } }]))
+    await expect(measureMark(io, cam, { x: -40, y: -60 }, 'square', LIMIT)).rejects.toThrow(/out of reach/)
+    expect(moves).toHaveLength(0)
+  })
+
   it('never moves beyond the soft limit', async () => {
     const limit = 460
     const m = placed(-0.8, false, { x: 10, y: 180 })
