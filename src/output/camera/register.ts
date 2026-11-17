@@ -141,6 +141,14 @@ export async function measureMark(
   kind: Detected['kind'],
   limitMm: number,
 ): Promise<Pt> {
+  // Centering needs the head right over the mark, so a mark out there can never be measured - say
+  // so before touring the looks around it.
+  // ponytail: a partner guess just past a limit gives up even if its mark lies just inside.
+  if (!reachable(guess, limitMm)) {
+    throw new MarkNotFound(
+      `The ${kind} mark near ${fmt(guess)} is out of reach (negative or past a limit) - set the cutter's origin so the marks lie at positive X and Y.`,
+    )
+  }
   const s = stepMm(cam)
   let hit: Pt | null = null
   for (const [i, j] of SPIRAL) {
@@ -148,12 +156,6 @@ export async function measureMark(
     if (!reachable(t, limitMm)) continue
     hit = (await look(io, cam, t, kind))?.at ?? null
     if (hit) break
-  }
-  // A mark out of reach is only ever seen cut off at the edge of a reachable look.
-  if (!hit && !reachable(guess, limitMm)) {
-    throw new MarkNotFound(
-      `The ${kind} mark near ${fmt(guess)} is out of reach (negative or past a limit) - set the cutter's origin so the marks lie at positive X and Y.`,
-    )
   }
   if (!hit) throw new MarkNotFound(`No ${kind} mark near ${fmt(guess)}.`)
   let p: Pt = hit

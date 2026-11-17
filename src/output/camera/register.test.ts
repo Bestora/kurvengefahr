@@ -250,6 +250,7 @@ describe('registerSheet', () => {
     // Just behind the feed origin: reachable looks exist but only see the mark cut off.
     const near = fakeIO(world([{ kind: 'square', at: { x: -19, y: 30 } }]))
     await expect(measureMark(near.io, cam, { x: -19, y: 30 }, 'square', LIMIT)).rejects.toThrow(/out of reach/)
+    expect(near.moves).toHaveLength(0)
   })
 
   it('never moves beyond the soft limit', async () => {
