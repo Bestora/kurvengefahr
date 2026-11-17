@@ -261,6 +261,13 @@ describe('registerSheet', () => {
     const near = fakeIO(world([{ kind: 'square', at: { x: -19, y: 30 } }]))
     await expect(measureMark(near.io, cam, { x: -19, y: 30 }, 'square', LIMIT)).rejects.toThrow(/out of reach/)
     expect(near.moves).toHaveLength(0)
+    const far = fakeIO(world([]))
+    await expect(measureMark(far.io, cam, { x: 10, y: LIMIT + 64.8 }, 'corner', LIMIT)).rejects.toThrow(
+      'out of reach: 64.8 mm past the soft limit',
+    )
+    await expect(measureMark(far.io, cam, { x: -3.7, y: 50 }, 'corner', LIMIT)).rejects.toThrow(
+      'out of reach: 3.7 mm behind the origin in X (feed)',
+    )
   })
 
   it('never moves beyond the soft limit', async () => {

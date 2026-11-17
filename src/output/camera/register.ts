@@ -86,6 +86,17 @@ function clampReach(p: Pt, limitMm: number): Pt {
   const carriage = Math.min(Math.max(CARRIAGE_AXIS === 'y' ? p.y : p.x, 0), limitMm)
   return onAxes(carriage, feed)
 }
+/** Which limit `p` lies past, for the operator. */
+function whyOut(p: Pt, limitMm: number): string {
+  const feed = feedOf(p)
+  const carriage = CARRIAGE_AXIS === 'y' ? p.y : p.x
+  const F = CARRIAGE_AXIS === 'y' ? 'X' : 'Y'
+  const C = CARRIAGE_AXIS === 'y' ? 'Y' : 'X'
+  if (carriage > limitMm) return `${(carriage - limitMm).toFixed(1)} mm past the soft limit (${C} ${limitMm} mm)`
+  if (feed > FEED_LIMIT_MM) return `${(feed - FEED_LIMIT_MM).toFixed(1)} mm past the feed limit (${F} ${FEED_LIMIT_MM} mm)`
+  if (feed < 0) return `${(-feed).toFixed(1)} mm behind the origin in ${F} (feed)`
+  return `${(-carriage).toFixed(1)} mm behind the origin in ${C} (carriage)`
+}
 /** A mark up to this far past a limit (a square printed right at the origin) is measured off-center
  *  from the limit - the calibrated camera matrix maps the offset; the head never crosses. */
 const EDGE_MM = 3
@@ -155,7 +166,7 @@ export async function measureMark(
   const outOfReach = (p: Pt) => dist(p, clampReach(p, limitMm)) > EDGE_MM
   if (outOfReach(guess)) {
     throw new MarkNotFound(
-      `The ${kind} mark near ${fmt(guess)} is out of reach (negative or past a limit) - set the cutter's origin so the marks lie at positive X and Y.`,
+      `The ${kind} mark near ${fmt(guess)} is out of reach: ${whyOut(guess, limitMm)}.`,
     )
   }
   const s = stepMm(cam)
@@ -179,11 +190,18 @@ export async function measureMark(
   throw new RegistrationError(`The ${kind} mark does not center under the camera - calibrate the camera again.`)
 }
 
-async function tryMeasure(io: RigIO, cam: CamCal, guess: Pt, kind: Detected['kind'], limitMm: number) {
+/** The mark's position, or why it was not found there. */
+async function tryMeasure(
+  io: RigIO,
+  cam: CamCal,
+  guess: Pt,
+  kind: Detected['kind'],
+  limitMm: number,
+): Promise<Pt | string> {
   try {
     return await measureMark(io, cam, guess, kind, limitMm)
   } catch (e) {
-    if (e instanceof MarkNotFound) return null
+    if (e instanceof MarkNotFound) return e.message
     throw e
   }
 }
@@ -288,8 +306,8 @@ async function search(
   for (const g of guesses) {
     onStatus(`Looking for the ${partner} near ${fmt(g)}…`)
     const m2 = await tryMeasure(io, cam, g, partner, lim)
-    if (!m2) {
-      onStatus(`No ${partner} there.`)
+    if (typeof m2 === 'string') {
+      onStatus(m2)
       continue
     }
     const got = dist(m1, m2)
@@ -331,12 +349,12 @@ async function search(
   const sign = mirrored ? -turn : turn
   const target = add(square, normal, sign * reach)
   const m3 = await tryMeasure(io, cam, target, 'corner', lim)
-  if (m3) {
+  if (typeof m3 !== 'string') {
     onStatus(`${cap(markNames(page)[missing])} at ${fmt(m3)}.`)
     return which === 'cornerX' ? { square, cornerX: corner, cornerY: m3 } : { square, cornerX: m3, cornerY: corner }
   }
   throw new RegistrationError(
-    `The ${markNames(page)[missing]} mark was not found near ${fmt(target)} - it may be out of reach (negative or past the feed limit); move the origin so the whole sheet lies at positive coordinates.`,
+    `${cap(markNames(page)[missing])}: ${m3} Place the sheet so all three marks lie inside the reachable area.`,
   )
 }
 
