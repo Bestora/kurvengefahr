@@ -187,3 +187,5 @@ do not use it up.
   You get a warning when a sheet's distortion differs noticeably from the previous sheet's.
 - Live streaming only; the `.plt` download is not registered.
 - Camera settings are stored per browser, not in the document.
+- Holographic and glitter stock work, but the marks need contrast: print them solid black, and
+  keep strong reflections off the marks.

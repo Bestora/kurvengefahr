@@ -17,39 +17,78 @@ pub struct Mark {
 }
 
 const MIN_PX: usize = 30;
+/// Corner pass: darker than the surroundings by this much (inkness 0..1) after averaging along a line.
+const LINE_CONTRAST: f32 = 0.04;
+/// ...and, lightly smoothed, by this share of it - trims the line averaging's spill beside the arms.
+const FINE_SHARE: f32 = 0.5;
 
-/// Dark blobs that are markedly darker than their surroundings, classified by shape: a filled
-/// square (compactness ~1) or an L-shaped corner mark (thin arms, compactness ~0.2). Blobs
-/// touching the frame border are dropped (cut off, centroid biased).
-pub fn find_marks(rgba: &[u8], w: usize, h: usize, mm_per_px: f64) -> Vec<Mark> {
-    if w == 0 || h == 0 || rgba.len() < w * h * 4 {
-        return vec![];
-    }
-    let grid = Grid::build(rgba, w, h, w as f32, h as f32, false);
-    // Integral image of inkness for a cheap local mean (handles vignetting / uneven lighting).
+/// Box mean of `v` over (2rx+1) x (2ry+1), clipped at the frame edge.
+fn box_mean(v: &[f32], w: usize, h: usize, rx: usize, ry: usize) -> Vec<f32> {
     let iw = w + 1;
     let mut integ = vec![0.0f64; iw * (h + 1)];
     for y in 0..h {
         let mut row = 0.0;
         for x in 0..w {
-            row += grid.at(x, y) as f64;
+            row += v[y * w + x] as f64;
             integ[(y + 1) * iw + x + 1] = integ[y * iw + x + 1] + row;
         }
     }
-    let r = w.max(h) / 4; // window side max(w,h)/2
-    let mut mask = vec![false; w * h];
+    let mut out = vec![0.0f32; w * h];
     for y in 0..h {
-        let (y0, y1) = (y.saturating_sub(r), (y + r + 1).min(h));
+        let (y0, y1) = (y.saturating_sub(ry), (y + ry + 1).min(h));
         for x in 0..w {
-            let (x0, x1) = (x.saturating_sub(r), (x + r + 1).min(w));
+            let (x0, x1) = (x.saturating_sub(rx), (x + rx + 1).min(w));
             let sum = integ[y1 * iw + x1] - integ[y0 * iw + x1] - integ[y1 * iw + x0]
                 + integ[y0 * iw + x0];
-            let mean = sum / ((x1 - x0) * (y1 - y0)) as f64;
-            // ponytail: fixed threshold 0.15 / window max(w,h)/2 - retune on real frames if the camera is too flat.
-            mask[y * w + x] = grid.at(x, y) as f64 - mean > 0.15;
+            out[y * w + x] = (sum / ((x1 - x0) * (y1 - y0)) as f64) as f32;
         }
     }
+    out
+}
 
+/// Dark marks, two passes, each keeping only its own kind. Square pass: pixels markedly darker than a wide neighbourhood (handles
+/// vignetting / uneven lighting). Corner pass, for glittery holo stock whose dark patches are as
+/// dark as the ink: average along rows and along columns first (the L's arms survive, glitter
+/// averages out), then compare with a narrow neighbourhood (broad dark patches cancel). Blobs are
+/// classified by shape: a filled square (compactness ~1) or an L-shaped corner mark (thin arms,
+/// compactness ~0.2). Blobs touching the frame border are dropped (cut off, centroid biased).
+pub fn find_marks(rgba: &[u8], w: usize, h: usize, mm_per_px: f64) -> Vec<Mark> {
+    if w == 0 || h == 0 || rgba.len() < w * h * 4 {
+        return vec![];
+    }
+    let grid = Grid::build(rgba, w, h, w as f32, h as f32, false);
+    let ink: Vec<f32> = (0..w * h).map(|i| grid.at(i % w, i / w)).collect();
+
+    // ponytail: fixed threshold 0.15 / window max(w,h)/2 - retune on real frames if the camera is too flat.
+    let wide = box_mean(&ink, w, h, w.max(h) / 4, w.max(h) / 4);
+    let mask: Vec<bool> = ink.iter().zip(&wide).map(|(i, m)| i - m > 0.15).collect();
+    let mut out: Vec<Mark> = blobs(&mask, w, h, mm_per_px)
+        .into_iter()
+        .filter(|m| m.kind == SQUARE)
+        .collect();
+
+    // ponytail: line length w/24 and neighbourhood w/12 tuned on 240 px holo frames (SK-720T, 2026-11-17).
+    let (len, near) = ((w / 24).max(2), (w / 12).max(4));
+    let along_x = box_mean(&ink, w, h, len, 1);
+    let along_y = box_mean(&ink, w, h, 1, len);
+    let narrow = box_mean(&ink, w, h, near, near);
+    let fine = box_mean(&ink, w, h, 1, 1);
+    let mask: Vec<bool> = (0..w * h)
+        .map(|i| {
+            along_x[i].max(along_y[i]) - narrow[i] > LINE_CONTRAST
+                && fine[i] - narrow[i] > LINE_CONTRAST * FINE_SHARE
+        })
+        .collect();
+    out.extend(
+        blobs(&mask, w, h, mm_per_px)
+            .into_iter()
+            .filter(|m| m.kind == CORNER),
+    );
+    out
+}
+
+/// Connected blobs of `mask`, classified.
+fn blobs(mask: &[bool], w: usize, h: usize, mm_per_px: f64) -> Vec<Mark> {
     let mut seen = vec![false; w * h];
     let mut out = vec![];
     let mut stack = vec![];
@@ -64,7 +103,7 @@ pub fn find_marks(rgba: &[u8], w: usize, h: usize, mm_per_px: f64) -> Vec<Mark> 
         while let Some(i) = stack.pop() {
             let (x, y) = (i % w, i / w);
             border |= x == 0 || y == 0 || x == w - 1 || y == h - 1;
-            px.push((x as f64 + 0.5, y as f64 + 0.5));
+            px.push(i);
             let mut push = |j: usize| {
                 if mask[j] && !seen[j] {
                     seen[j] = true;
@@ -87,13 +126,15 @@ pub fn find_marks(rgba: &[u8], w: usize, h: usize, mm_per_px: f64) -> Vec<Mark> 
         if border || px.len() < MIN_PX {
             continue;
         }
+        let at = |i: usize| ((i % w) as f64 + 0.5, (i / w) as f64 + 0.5);
         let n = px.len() as f64;
         let (cx, cy) = (
-            px.iter().map(|p| p.0).sum::<f64>() / n,
-            px.iter().map(|p| p.1).sum::<f64>() / n,
+            px.iter().map(|&i| at(i).0).sum::<f64>() / n,
+            px.iter().map(|&i| at(i).1).sum::<f64>() / n,
         );
         let (mut m20, mut m02, mut m11) = (0.0, 0.0, 0.0);
-        for &(x, y) in &px {
+        for &i in &px {
+            let (x, y) = at(i);
             m20 += (x - cx) * (x - cx);
             m02 += (y - cy) * (y - cy);
             m11 += (x - cx) * (y - cy);
@@ -108,7 +149,8 @@ pub fn find_marks(rgba: &[u8], w: usize, h: usize, mm_per_px: f64) -> Vec<Mark> 
         let known = mm_per_px > 0.0;
         let kind = if (0.8..=1.25).contains(&c) && (!known || (23.0..=49.0).contains(&area_mm2)) {
             SQUARE
-        } else if (0.12..=0.35).contains(&c) && (!known || (11.0..=24.0).contains(&area_mm2)) {
+        // Corner ~14 mm² printed; on holo stock the corner pass's mask runs up to ~1.4x that.
+        } else if (0.12..=0.35).contains(&c) && (!known || (11.0..=28.0).contains(&area_mm2)) {
             CORNER
         } else {
             continue;
@@ -260,7 +302,41 @@ mod tests {
         assert_eq!(m[0].kind, CORNER);
         // analytic centroid of the L: 100 + 48380/1780, 80 + 48380/1780
         let c = 48380.0 / 1780.0;
-        assert!((m[0].x - (100.0 + c)).abs() < 0.5 && (m[0].y - (80.0 + c)).abs() < 0.5);
+        assert!(
+            (m[0].x - (100.0 + c)).abs() < 0.5 && (m[0].y - (80.0 + c)).abs() < 0.5,
+            "{:?} vs {c}",
+            m[0]
+        );
+    }
+
+    #[test]
+    fn finds_corner_on_holo_stock() {
+        // Holo foil: broad patches as dark as the ink right beside the arm, glitter on top.
+        let ink = l_shape(100.0, 80.0, 94.0, 10.0);
+        let mut v = vec![];
+        let mut seed = 7u32;
+        for y in 0..300 {
+            for x in 0..400 {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let glitter = (seed >> 24) as f64 / 255.0 * 50.0 - 25.0;
+                let patch = (110..200).contains(&x) && (40..75).contains(&y);
+                let base = if ink(x as f64 + 0.5, y as f64 + 0.5) {
+                    95.0
+                } else if patch {
+                    100.0
+                } else {
+                    135.0
+                };
+                let g = (base + glitter).clamp(0.0, 255.0) as u8;
+                v.extend_from_slice(&[g, g, g, 255]);
+            }
+        }
+        let m = find_marks(&v, 400, 300, 0.1);
+        let corners: Vec<_> = m.iter().filter(|m| m.kind == CORNER).collect();
+        assert_eq!(corners.len(), 1, "{m:?}");
+        let c = 48380.0 / 1780.0;
+        let err = (corners[0].x - (100.0 + c)).hypot(corners[0].y - (80.0 + c));
+        assert!(err < 3.0, "{:?} off by {err}", corners[0]);
     }
 
     #[test]
