@@ -170,10 +170,12 @@ pub fn frame_diff(a: &[u8], b: &[u8]) -> f64 {
     if a.len() != b.len() || a.is_empty() {
         return f64::INFINITY;
     }
-    let luma = |p: &[u8]| 0.299 * p[0] as f64 + 0.587 * p[1] as f64 + 0.114 * p[2] as f64;
+    let luma = |p: &[u8; 4]| 0.299 * p[0] as f64 + 0.587 * p[1] as f64 + 0.114 * p[2] as f64;
     let sum: f64 = a
-        .chunks_exact(4)
-        .zip(b.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(b.as_chunks::<4>().0)
         .map(|(p, q)| (luma(p) - luma(q)).abs())
         .sum();
     sum / (a.len() / 4) as f64
