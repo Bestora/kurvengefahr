@@ -243,6 +243,16 @@ describe('registerSheet', () => {
     expect(status).not.toContain('Searching for the first mark…')
   })
 
+  it('measures a square printed just behind the origin without crossing it', async () => {
+    const sq = { x: -0.5, y: 72 }
+    const { io, moves } = fakeIO(world([{ kind: 'square', at: sq }]))
+    const p = await measureMark(io, cam, sq, 'square', LIMIT)
+    expect(dist(p, sq)).toBeLessThan(0.05)
+    for (const m of moves) expect(Math.min(m.x, m.y)).toBeGreaterThanOrEqual(0)
+    // The first look is from the origin edge right beside it, not a step away.
+    expect(dist(moves[0], { x: 0, y: 72 })).toBeLessThan(0.01)
+  })
+
   it('says when the mark lies below the origin', async () => {
     const { io, moves } = fakeIO(world([{ kind: 'square', at: { x: -40, y: -60 } }]))
     await expect(measureMark(io, cam, { x: -40, y: -60 }, 'square', LIMIT)).rejects.toThrow(/out of reach/)

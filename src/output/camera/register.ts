@@ -80,6 +80,15 @@ export const FEED_LIMIT_MM = 300
 const feedOf = (p: Pt) => (CARRIAGE_AXIS === 'y' ? p.x : p.y)
 const reachable = (p: Pt, limitMm: number) =>
   p.x >= 0 && p.y >= 0 && feedOf(p) <= FEED_LIMIT_MM && !beyondSoftLimit(p, limitMm)
+/** The reachable point nearest `p`. */
+function clampReach(p: Pt, limitMm: number): Pt {
+  const feed = Math.min(Math.max(feedOf(p), 0), FEED_LIMIT_MM)
+  const carriage = Math.min(Math.max(CARRIAGE_AXIS === 'y' ? p.y : p.x, 0), limitMm)
+  return onAxes(carriage, feed)
+}
+/** A mark up to this far past a limit (a square printed right at the origin) is measured off-center
+ *  from the limit - the calibrated camera matrix maps the offset; the head never crosses. */
+const EDGE_MM = 3
 
 /** Wait out the move, then return the first frame that matches its predecessor. */
 export async function settle(io: RigIO, distMm: number): Promise<Frame> {
@@ -141,10 +150,10 @@ export async function measureMark(
   kind: Detected['kind'],
   limitMm: number,
 ): Promise<Pt> {
-  // Centering needs the head right over the mark, so a mark out there can never be measured - say
-  // so before touring the looks around it.
-  // ponytail: a partner guess just past a limit gives up even if its mark lies just inside.
-  if (!reachable(guess, limitMm)) {
+  // A mark further out can never be measured - say so before touring the looks around it.
+  // ponytail: a partner guess just past the edge band gives up even if its mark lies just inside.
+  const outOfReach = (p: Pt) => dist(p, clampReach(p, limitMm)) > EDGE_MM
+  if (outOfReach(guess)) {
     throw new MarkNotFound(
       `The ${kind} mark near ${fmt(guess)} is out of reach (negative or past a limit) - set the cutter's origin so the marks lie at positive X and Y.`,
     )
@@ -153,15 +162,16 @@ export async function measureMark(
   let hit: Pt | null = null
   for (const [i, j] of SPIRAL) {
     const t = { x: guess.x + i * s, y: guess.y + j * s }
-    if (!reachable(t, limitMm)) continue
-    hit = (await look(io, cam, t, kind))?.at ?? null
+    if (outOfReach(t)) continue
+    hit = (await look(io, cam, clampReach(t, limitMm), kind))?.at ?? null
     if (hit) break
   }
   if (!hit) throw new MarkNotFound(`No ${kind} mark near ${fmt(guess)}.`)
+  // Each round looks from the last estimate (clamped into reach) until the estimate stops moving.
   let p: Pt = hit
   for (let i = 0; i < CENTER_ROUNDS; i++) {
-    if (!reachable(p, limitMm)) throw new RegistrationError(`The ${kind} mark at ${fmt(p)} is out of reach.`)
-    const q: Pt | undefined = (await look(io, cam, p, kind))?.at
+    if (outOfReach(p)) throw new RegistrationError(`The ${kind} mark at ${fmt(p)} is out of reach.`)
+    const q: Pt | undefined = (await look(io, cam, clampReach(p, limitMm), kind))?.at
     if (!q) throw new RegistrationError(`Lost the ${kind} mark while centering it.`)
     if (dist(p, q) <= CONVERGE_MM) return q
     p = q
@@ -191,7 +201,9 @@ export async function registerSheet(
   const jogged = held ? markIn(io, cam, await settle(io, 0), held, null) : null
   if (held) onStatus(jogged ? `A ${jogged.kind} mark is under the camera at ${fmt(jogged.at)}.` : 'No mark under the camera.')
   let found: MarkLayout | null = null
-  if (lastMarks) {
+  // A mark the operator jogged onto far from the last sheet's says the sheet moved.
+  const moved = jogged && Object.values(lastMarks ?? {}).every((p) => dist(p, jogged.at) > MARK_SPAN_MM)
+  if (lastMarks && !moved) {
     // Fast path: the next sheet usually lies where the last one did.
     onStatus('Looking where the last sheet was…')
     const measure = async (k: keyof MarkLayout) => {
