@@ -17,6 +17,9 @@ pub struct Mark {
 }
 
 const MIN_PX: usize = 30;
+/// Unknown scale: a square smaller than this is mat grain, not the 6 mm square - which covers
+/// 400 px even at the coarsest plausible camera scale (0.3 mm/px, `MM_PER_PX_RANGE` in TS).
+const MIN_SQUARE_PX_UNSCALED: f64 = 400.0;
 /// Corner pass: darker than the surroundings by this much (inkness 0..1) after averaging along a line.
 const LINE_CONTRAST: f32 = 0.04;
 /// ...and, lightly smoothed, by this share of it - trims the line averaging's spill beside the arms.
@@ -147,7 +150,12 @@ fn blobs(mask: &[bool], w: usize, h: usize, mm_per_px: f64) -> Vec<Mark> {
         let c = n / (12.0 * det.sqrt());
         let area_mm2 = n * mm_per_px * mm_per_px;
         let known = mm_per_px > 0.0;
-        let kind = if (0.8..=1.25).contains(&c) && (!known || (23.0..=49.0).contains(&area_mm2)) {
+        let square_size = if known {
+            (23.0..=49.0).contains(&area_mm2)
+        } else {
+            n >= MIN_SQUARE_PX_UNSCALED
+        };
+        let kind = if (0.8..=1.25).contains(&c) && square_size {
             SQUARE
         // Corner ~14 mm² printed; on holo stock the corner pass's mask runs up to ~1.4x that.
         } else if (0.12..=0.35).contains(&c) && (!known || (11.0..=28.0).contains(&area_mm2)) {
@@ -363,6 +371,12 @@ mod tests {
         );
         assert_eq!(m.len(), 1);
         assert_eq!(m[0].kind, SQUARE);
+    }
+
+    #[test]
+    fn ignores_mat_grain_when_scale_unknown() {
+        let a = img(400, 300, rotated_square(200.0, 150.0, 8.0, 0.0), white);
+        assert!(find_marks(&a, 400, 300, 0.0).is_empty());
     }
 
     #[test]

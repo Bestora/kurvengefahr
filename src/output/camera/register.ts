@@ -334,7 +334,7 @@ const FIND_STEP_MM = 4
 
 /** Head position with the square in view, centered along the carriage. Looks at `start` first,
  *  then sweeps rows along the carriage from feed `start`, stepping on while the square stays in
- *  view and returning the middle of that run.
+ *  view and returning the middle of that run (at least two looks long).
  *  ponytail: not centered along the feed - a square at the feed edge can drop out of a probe; the
  *  calibration then asks for a jog. */
 export async function findSquare(io: RigIO, start: Pt, limitMm: number, onStatus: (msg: string) => void): Promise<Pt> {
@@ -352,6 +352,11 @@ export async function findSquare(io: RigIO, start: Pt, limitMm: number, onStatus
       if (!reachable(p, limitMm) || !(await sees(p))) continue
       let end = c
       while (end + FIND_STEP_MM <= limitMm && (await sees(onAxes(end + FIND_STEP_MM, feed)))) end += FIND_STEP_MM
+      // The square spans several steps of the view; a single sighting is a flicker (paper edge, foil).
+      if (end === c) {
+        onStatus(`Something square-ish at Y ${c} mm, gone one step on - ignored.`)
+        continue
+      }
       const mid = onAxes((c + end) / 2, feed)
       onStatus(`Found the square between Y ${c} and ${end} mm - calibrating at ${fmt(mid)}…`)
       return mid

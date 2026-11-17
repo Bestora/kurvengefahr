@@ -181,7 +181,8 @@ export const useRegistration = create<RegistrationStore>((set, get) => {
         set({ affine: null, warning: null })
         try {
           const { cam } = useCameraRig.getState()
-          if (!cam || !plausibleCam(cam)) note(await calibrateHere(io))
+          const f = cam && plausibleCam(cam) ? await io.capture() : null
+          if (!cam || !f || f.width !== cam.w || f.height !== cam.h) note(await calibrateHere(io))
           const r = await registerSheet(io, useCameraRig.getState(), note)
           useCameraRig.getState().patch({ lastMarks: r.marks, lastAffine: r.affine })
           set({ affine: r.affine, warning: r.warning })

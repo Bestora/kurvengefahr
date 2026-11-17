@@ -330,6 +330,25 @@ describe('findSquare', () => {
     cal.m.forEach((v, i) => expect(Math.abs(v - J[i])).toBeLessThan(1e-6))
   })
 
+  it('ignores a square seen at a single sweep position', async () => {
+    const sq = { x: 6, y: 123 }
+    const { io } = fakeIO(world([{ kind: 'square', at: sq }]))
+    const detect = io.detect
+    let flicker = true
+    io.detect = (f, s) => {
+      const t = f as Frame & { head: Pt }
+      if (flicker && Math.abs(t.head.y - 40) < 1) {
+        flicker = false
+        return [{ kind: 'square', x: 200, y: 150, areaMm2: 0 }]
+      }
+      return detect(f, s)
+    }
+    const status: string[] = []
+    const p = await findSquare(io, { x: 0, y: 0 }, LIMIT, (m) => status.push(m))
+    expect(status).toContain('Something square-ish at Y 40 mm, gone one step on - ignored.')
+    expect(Math.abs(p.y - sq.y)).toBeLessThan(4)
+  })
+
   it('says so when no square lies along Y', async () => {
     const { io } = fakeIO(world([]))
     await expect(findSquare(io, { x: 0, y: 0 }, 40, () => {})).rejects.toThrow(/No square found/)
