@@ -5,11 +5,15 @@ import {
   PROXIES_AT_HOME_MARKS,
   applyAffine,
   checkRegistration,
-  cornerSides,
   markNames,
-  mirrorLayout,
+  insetLayout,
+  markInset,
   moveLayout,
+  onSheet,
   previewOrientation,
+  rotateLayout,
+  squareCorner,
+  squareToCorner,
   testCutGeometry,
   withOffset,
 } from "./registration";
@@ -85,15 +89,42 @@ describe("previewOrientation", () => {
 
 describe("mark layout sides", () => {
   const L = PROXIES_AT_HOME_MARKS;
-  it("mirrors across the square and renames the corners", () => {
-    const f = mirrorLayout(mirrorLayout(L, "x"), "y");
-    expect(cornerSides(L)).toEqual({ x: "right", y: "below" });
-    expect(cornerSides(f)).toEqual({ x: "left", y: "above" });
-    expect(f.square).toEqual(L.square);
-    expect(f.cornerX.x).toBeCloseTo(2 * L.square.x - L.cornerX.x);
-    expect(f.cornerY.y).toBeCloseTo(2 * L.square.y - L.cornerY.y);
+  const A4 = { width: 297, height: 210 };
+  it("puts the square in another sheet corner by flipping across the page", () => {
+    expect(squareCorner(L)).toBe("top-left");
+    const f = squareToCorner(L, "bottom-right", A4);
+    expect(squareCorner(f)).toBe("bottom-right");
+    expect(f.square.x).toBeCloseTo(297 - L.square.x);
+    expect(f.cornerY.y).toBeCloseTo(210 - L.cornerY.y);
+    expect(onSheet(f, A4)).toBe(true);
     expect(markNames(L)).toEqual({ square: "square", cornerX: "top-right corner", cornerY: "bottom-left corner" });
     expect(markNames(f)).toEqual({ square: "square", cornerX: "bottom-left corner", cornerY: "top-right corner" });
+    expect(squareToCorner(f, "top-left", A4).cornerX.x).toBeCloseTo(L.cornerX.x);
+  });
+  it("turns a quarter clockwise: square top-right, the long side runs down", () => {
+    const r = rotateLayout(L, A4.height);
+    expect(squareCorner(r)).toBe("top-right");
+    expect(r.square).toEqual({ x: 210 - L.square.y, y: L.square.x });
+    expect(Math.abs(r.cornerX.x - r.square.x)).toBeCloseTo(L.cornerY.y - L.square.y);
+    expect(Math.abs(r.cornerY.y - r.square.y)).toBeCloseTo(L.cornerX.x - L.square.x);
+    expect(onSheet(r, A4)).toBe(false);
+    expect(onSheet(r, { width: 210, height: 297 })).toBe(true);
+    expect(squareCorner(rotateLayout(r, A4.width))).toBe("bottom-right");
+  });
+  it("builds the layout from sheet, inset and corner", () => {
+    for (const k of ["square", "cornerX", "cornerY"] as const) {
+      expect(L[k].x).toBeCloseTo([12.64, 284.92, 12.36][["square", "cornerX", "cornerY"].indexOf(k)]);
+      expect(L[k].y).toBeCloseTo([12.65, 12.36, 197.93][["square", "cornerX", "cornerY"].indexOf(k)]);
+    }
+    const portrait = { width: 210, height: 297 };
+    const l = insetLayout(portrait, 5, "bottom-right");
+    expect(l.square.x).toBeCloseTo(202.36);
+    expect(l.square.y).toBeCloseTo(289.35);
+    expect(l.cornerX.x).toBeCloseTo(7.08);
+    expect(l.cornerY.y).toBeCloseTo(7.07);
+    expect(markInset(l, portrait)).toBeCloseTo(5);
+    expect(markInset(L, A4)).toBeCloseTo(10);
+    expect(markInset({ ...l, cornerX: { x: 9.5, y: l.cornerX.y } }, portrait)).toBeNull();
   });
   it("moves every mark with the square", () => {
     const m = moveLayout(L, { x: L.square.x + 10, y: L.square.y - 5 });

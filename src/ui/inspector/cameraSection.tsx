@@ -4,11 +4,16 @@
 import { useState } from 'react'
 import {
   PROXIES_AT_HOME_MARKS,
-  cornerSides,
+  PROXIES_AT_HOME_SHEET,
+  insetLayout,
+  markInset,
   markNames,
-  mirrorLayout,
   moveLayout,
+  onSheet,
   previewOrientation,
+  rotateLayout,
+  squareCorner,
+  squareToCorner,
   type MarkLayout,
 } from '../../core/registration'
 import { affineStrain } from '../../core/wasm/registration'
@@ -18,6 +23,7 @@ import { useRegistration } from '../../store/registration'
 import { useSerial } from '../../store/serial'
 import { Banner, Button, Disclosure, Field, IconButton, SectionTitle, controlClass } from '../primitives'
 import { Num } from './controls'
+import { HeadMap, KnifeOffsetDiagram, MarkLayoutPicker } from './markDiagrams'
 
 const STEPS = [1, 5, 20, 50]
 const NEEDS_PORT = 'Connect the cutter first'
@@ -41,6 +47,7 @@ export function CameraRegistrationSection() {
     setUrlDraft(null)
   }
   const marks = rig.marks
+  const inset = markInset(marks, rig.sheet)
   // The square carries the whole layout along; a corner moves alone.
   const setMark = (k: keyof MarkLayout, axis: 'x' | 'y', v: number) =>
     rig.patch({
@@ -49,7 +56,9 @@ export function CameraRegistrationSection() {
           ? moveLayout(marks, { ...marks.square, [axis]: v })
           : { ...marks, [k]: { ...marks[k], [axis]: v } },
     })
-  const sides = cornerSides(marks)
+  const sheet = rig.sheet
+  // The last sheet's mark positions say nothing about a sheet printed another way.
+  const relayout = (m: MarkLayout, s = sheet) => rig.patch({ marks: m, sheet: s, lastMarks: null })
   const names = markNames(marks)
   const cap = (t: string) => t[0].toUpperCase() + t.slice(1)
   const strain = reg.affine ? affineStrain(reg.affine) : null
@@ -141,6 +150,16 @@ export function CameraRegistrationSection() {
         Check the carriage direction once before the first search: +Y should move the head left.
       </p>
 
+      {!!rig.url && (
+        <HeadMap
+          limitMm={rig.softLimitMm}
+          head={reg.head}
+          viewMm={rig.cam && mmPerPx !== null ? Math.min(rig.cam.w, rig.cam.h) * mmPerPx : null}
+          last={rig.lastMarks}
+          found={reg.found}
+        />
+      )}
+
       <div className="mt-2 flex flex-wrap gap-2">
         <Button
           disabled={!act}
@@ -190,6 +209,7 @@ export function CameraRegistrationSection() {
         onChange={(v) => rig.patch({ knifeOffset: { ...rig.knifeOffset, x: v } })} />
       <Num label="Knife offset Y (mm)" value={rig.knifeOffset.y} step={0.1}
         onChange={(v) => rig.patch({ knifeOffset: { ...rig.knifeOffset, y: v } })} />
+      <KnifeOffsetDiagram offset={rig.knifeOffset} />
       <p className="text-xs text-muted">
         Uses the jog axes: a positive X or Y shifts the cut the way the Jog +X / +Y button moves the head. If the
         test cut&apos;s white rim is wider on one side, shift the cut towards that side by half the difference.
@@ -197,37 +217,43 @@ export function CameraRegistrationSection() {
       <Num label="Soft limit (mm)" title="Furthest the head may travel along the carriage with the camera fitted."
         value={rig.softLimitMm} step={0.25} onChange={(v) => v > 0 && rig.patch({ softLimitMm: v })} />
 
-      <Disclosure label="Mark layout">
-        <Field label="Horizontal corner" title="The corner mark level with the square: right or left of it">
-          <select
-            className={controlClass}
-            value={sides.x}
-            onChange={(e) => e.target.value !== sides.x && rig.patch({ marks: mirrorLayout(marks, 'x') })}
-          >
-            <option value="right">Right of the square</option>
-            <option value="left">Left of the square</option>
-          </select>
-        </Field>
-        <Field label="Vertical corner" title="The corner mark in line with the square: below or above it">
-          <select
-            className={controlClass}
-            value={sides.y}
-            onChange={(e) => e.target.value !== sides.y && rig.patch({ marks: mirrorLayout(marks, 'y') })}
-          >
-            <option value="below">Below the square</option>
-            <option value="above">Above the square</option>
-          </select>
-        </Field>
+      <SectionTitle>Mark layout</SectionTitle>
+      <MarkLayoutPicker marks={marks} page={sheet} onPick={(c) => relayout(squareToCorner(marks, c, sheet))} />
+      <p className="text-xs text-muted">
+        The sheet as printed ({sheet.width} x {sheet.height} mm), square in the {squareCorner(marks)} corner. Click
+        the corner where your print has the square.
+      </p>
+      {!onSheet(marks, sheet) && (
+        <Banner variant="warn">The marks lie outside the sheet. Check the sheet size and the mark positions.</Banner>
+      )}
+      {inset === null && (
+        <Banner variant="warn">These mark positions match no mark inset. Enter the template&apos;s inset to place all three marks.</Banner>
+      )}
+      <Num
+        label="Mark inset (mm)"
+        title="The template's registration mark inset - Proxies at Home puts it in the file name (5mm_inset). Places all three marks for this sheet size and corner"
+        value={inset ?? NaN}
+        step={1}
+        onChange={(v) => v >= 0 && relayout(insetLayout(sheet, v, squareCorner(marks)))}
+      />
+      <Button
+        className="mt-2 w-full"
+        title="Quarter turn clockwise, sheet and marks together, for a sheet printed the other way up: the long side of the marks becomes the short one"
+        onClick={() => relayout(rotateLayout(marks, sheet.height), { width: sheet.height, height: sheet.width })}
+      >
+        Rotate 90°
+      </Button>
+      <Disclosure label="Mark positions">
+        <Num label="Sheet W (mm)" value={sheet.width} step={1} onChange={(v) => v > 0 && rig.patch({ sheet: { ...sheet, width: v } })} />
+        <Num label="Sheet H (mm)" value={sheet.height} step={1} onChange={(v) => v > 0 && rig.patch({ sheet: { ...sheet, height: v } })} />
         {(['square', 'cornerX', 'cornerY'] as const).map((k) => (
           <div key={k}>
             <Num label={`${cap(names[k])} X (mm)`} value={marks[k].x} step={0.1} onChange={(v) => setMark(k, 'x', v)} />
             <Num label={`${cap(names[k])} Y (mm)`} value={marks[k].y} step={0.1} onChange={(v) => setMark(k, 'y', v)} />
           </div>
         ))}
-        <p className="text-xs text-muted">
-          Switching a side mirrors the corners across the square. Moving the square moves all three marks.
-        </p>
-        <Button className="mt-2 w-full" onClick={() => rig.patch({ marks: PROXIES_AT_HOME_MARKS })}>
+        <p className="text-xs text-muted">Moving the square moves all three marks.</p>
+        <Button className="mt-2 w-full" onClick={() => relayout(PROXIES_AT_HOME_MARKS, PROXIES_AT_HOME_SHEET)}>
           Reset to Proxies at Home
         </Button>
       </Disclosure>

@@ -21,11 +21,42 @@ export function cornerSides(l: MarkLayout): { x: "right" | "left"; y: "below" | 
   return { x: l.cornerX.x >= l.square.x ? "right" : "left", y: l.cornerY.y >= l.square.y ? "below" : "above" };
 }
 
-/** Every mark mirrored across the square along page `axis`: the corners swap sides. */
-export function mirrorLayout(l: MarkLayout, axis: "x" | "y"): MarkLayout {
-  const c = l.square[axis];
-  const m = (p: Pt): Pt => ({ ...p, [axis]: 2 * c - p[axis] });
-  return { square: l.square, cornerX: m(l.cornerX), cornerY: m(l.cornerY) };
+export type SheetCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+export interface PageSize {
+  width: number;
+  height: number;
+}
+
+/** The sheet corner the square is printed in: away from the sides its corner marks lie on. */
+export function squareCorner(l: MarkLayout): SheetCorner {
+  const s = cornerSides(l);
+  return `${s.y === "below" ? "top" : "bottom"}-${s.x === "right" ? "left" : "right"}`;
+}
+
+/** The layout flipped across the sheet's center lines so the square lands in sheet corner `to`.
+ *  The sheet's top-left corner is the page origin. */
+export function squareToCorner(l: MarkLayout, to: SheetCorner, page: PageSize): MarkLayout {
+  const [fromV, fromH] = squareCorner(l).split("-");
+  const [v, h] = to.split("-");
+  const m = (p: Pt): Pt => ({
+    x: fromH === h ? p.x : page.width - p.x,
+    y: fromV === v ? p.y : page.height - p.y,
+  });
+  return { square: m(l.square), cornerX: m(l.cornerX), cornerY: m(l.cornerY) };
+}
+
+export function onSheet(l: MarkLayout, page: PageSize): boolean {
+  return [l.square, l.cornerX, l.cornerY].every(
+    (p) => p.x >= 0 && p.x <= page.width && p.y >= 0 && p.y <= page.height,
+  );
+}
+
+/** A quarter turn clockwise with the sheet (its height before the turn), for a sheet printed the
+ *  other way up: the long side of the marks becomes the short one. The corner level with the
+ *  square ends up in line with it, so the two corners swap roles. */
+export function rotateLayout(l: MarkLayout, sheetHeight: number): MarkLayout {
+  const r = (p: Pt): Pt => ({ x: sheetHeight - p.y, y: p.x });
+  return { square: r(l.square), cornerX: r(l.cornerY), cornerY: r(l.cornerX) };
 }
 
 /** The whole layout shifted so the square sits at `to`. */
@@ -45,11 +76,34 @@ export function markNames(l: MarkLayout): Record<keyof MarkLayout, string> {
   return { square: "square", cornerX: `${notV}-${h} corner`, cornerY: `${v}-${notH} corner` };
 }
 
-export const PROXIES_AT_HOME_MARKS: MarkLayout = {
-  square: { x: 12.64, y: 12.65 },
-  cornerX: { x: 284.92, y: 12.36 },
-  cornerY: { x: 12.36, y: 197.93 },
-};
+export const PROXIES_AT_HOME_SHEET: PageSize = { width: 297, height: 210 };
+
+/** Centroid offsets of the Proxies at Home marks, as measured on its default template. */
+const SQUARE_IN = { x: 2.64, y: 2.65 };
+const CORNER_IN = { along: 2.08, across: 2.36 };
+
+/** The Proxies at Home marks for a sheet: `inset` mm in from the edges (the template's setting,
+ *  10 by default - it is in the file name, "5mm_inset"), the square in sheet corner `corner`. */
+export function insetLayout(sheet: PageSize, inset: number, corner: SheetCorner): MarkLayout {
+  const topLeft: MarkLayout = {
+    square: { x: inset + SQUARE_IN.x, y: inset + SQUARE_IN.y },
+    cornerX: { x: sheet.width - inset - CORNER_IN.along, y: inset + CORNER_IN.across },
+    cornerY: { x: inset + CORNER_IN.across, y: sheet.height - inset - CORNER_IN.along + 0.01 },
+  };
+  return squareToCorner(topLeft, corner, sheet);
+}
+
+/** The inset `l` was laid out with, or null when its marks match no inset (hand-edited positions). */
+export function markInset(l: MarkLayout, sheet: PageSize): number | null {
+  const inset = Math.round((Math.min(l.square.x, sheet.width - l.square.x) - SQUARE_IN.x) * 100) / 100;
+  const want = insetLayout(sheet, inset, squareCorner(l));
+  const same = (["square", "cornerX", "cornerY"] as const).every(
+    (k) => Math.hypot(want[k].x - l[k].x, want[k].y - l[k].y) < 0.05,
+  );
+  return same ? inset : null;
+}
+
+export const PROXIES_AT_HOME_MARKS: MarkLayout = insetLayout(PROXIES_AT_HOME_SHEET, 10, "top-left");
 
 export const TEST_CUT_SIDE_MM = 7.99;
 

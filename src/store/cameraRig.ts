@@ -3,12 +3,12 @@
 // document or machine profile — documents are undoable, exported and shared; the rig is not.
 // Persisted to localStorage under one key; the loader never throws (Outcome + per-field sanitizing).
 import { create } from 'zustand'
-import { PROXIES_AT_HOME_MARKS, type MarkLayout } from '../core/registration'
+import { PROXIES_AT_HOME_MARKS, PROXIES_AT_HOME_SHEET, type MarkLayout, type PageSize } from '../core/registration'
 import type { Affine, CamMatrix, Pt } from '../core/wasm/registration'
 import type { Outcome } from './persistence/schema'
 
 export const CAMERA_RIG_KEY = 'kg-camera-rig'
-export const CURRENT_RIG_SCHEMA = 1
+export const CURRENT_RIG_SCHEMA = 2
 
 /** px->mm calibration; only valid for this image size. */
 export interface CamCal {
@@ -25,6 +25,8 @@ export interface CameraRig {
   /** mm, added to every cut point. */
   knifeOffset: Pt
   marks: MarkLayout
+  /** The printed sheet the marks sit on; its top-left corner is the page origin. */
+  sheet: PageSize
   /** Machine-mm mark positions of the last sheet. */
   lastMarks: MarkLayout | null
   lastAffine: Affine | null
@@ -36,6 +38,7 @@ const DEFAULTS: CameraRig = {
   cam: null,
   knifeOffset: { x: 0, y: 0 },
   marks: PROXIES_AT_HOME_MARKS,
+  sheet: PROXIES_AT_HOME_SHEET,
   lastMarks: null,
   lastAffine: null,
 }
@@ -76,6 +79,11 @@ export function loadRig(raw: unknown): Outcome<CameraRig> {
       cam: camCal(raw.cam),
       knifeOffset: pt(raw.knifeOffset) ?? DEFAULTS.knifeOffset,
       marks: layout(raw.marks) ?? DEFAULTS.marks,
+      // Schema 1 had no sheet: its layouts were made for the A4 default.
+      sheet:
+        isObj(raw.sheet) && fin(raw.sheet.width) && fin(raw.sheet.height) && raw.sheet.width > 0 && raw.sheet.height > 0
+          ? { width: raw.sheet.width, height: raw.sheet.height }
+          : DEFAULTS.sheet,
       lastMarks: layout(raw.lastMarks),
       lastAffine: finArr(raw.lastAffine, 6) ? (raw.lastAffine as Affine) : null,
     },

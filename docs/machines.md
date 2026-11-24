@@ -151,18 +151,26 @@ with live streaming only.
 4. Load a printed sheet and press *Calibrate camera*. It uses the square under the camera, or
    sweeps along the carriage in rows to find it, then moves 3 mm along X and Y to learn the camera
    scale. You can skip this step: *Measure sheet* calibrates first when there is no calibration.
-5. Open *Mark layout* if your template differs from the Proxies at Home sheet. *Horizontal
-   corner* sets whether the corner mark level with the square lies right or left of it, *Vertical
-   corner* whether the other one lies below or above it. Switching a side mirrors the corners
-   across the square. Then enter the square's position from the template: it moves all three
-   marks. Fine-tune a single corner with its own X and Y.
+5. Set the *Mark layout* if your print differs from the Proxies at Home sheet. The picture shows
+   the printed sheet with the square and the two corner marks. Click the sheet corner where your
+   print has the square: the layout flips across the sheet. *Rotate 90°* turns sheet and marks a
+   quarter turn, for a sheet printed the other way up (the long side of the marks becomes the
+   short one). *Mark inset* is the template's registration inset (Proxies at Home puts it in the
+   file name, `5mm_inset`; the default is 10) and places all three marks for it. *Mark positions* holds the sheet size (A4 by default) and the exact numbers from
+   the template: moving the square moves all three marks, a corner moves alone. The sheet's
+   top-left corner is the page origin. If *Measure sheet* stops because a corner lies a few mm off
+   the layout's distance, the mark inset is wrong or the print is not at 100 % scale. Set the
+   template's inset rather than editing the positions to match: a print that came out a little
+   small is then measured at its real scale and cut to match it. When the positions match no
+   inset, the panel says so.
 
 With a camera URL set, every live HP-GL cut is refused until the sheet is measured. Clear the URL
 for plain plotting. Recalibrate after moving the camera or changing its resolution.
 
 While calibrating or measuring, the section lists each step (where it looks, what it found, why a
-mark was skipped), shows where the head is moving, and ends with the result or the reason it
-stopped.
+mark was skipped) and ends with the result or the reason it stopped. A map of the cutter, seen
+from the front with the origin bottom right, follows the head live: the red dot is the head, the
+ring the camera's view, faint marks the last sheet, solid marks the ones measured so far.
 
 **Per sheet**
 
@@ -175,7 +183,8 @@ stopped.
    square 1 mm around the square mark. Measure the white rim left around the cut. Knife offset X
    and Y use the jog axes: a positive value shifts the cut the way the *Jog* +X / +Y button moves
    the head. If the rim is wider on one side, shift the cut towards that side by half the
-   difference.
+   difference. The picture under the two fields shows the shift as seen from the front: the
+   print grey, the cut red, the shift drawn 8 times larger.
 4. Swap the camera for the knife at the origin and cut.
 
 Each registration is used by one cut job, so measure again for the next sheet. To cut the same

@@ -11,6 +11,7 @@ describe('loadRig', () => {
     expect(o.status === 'ok' && o.value.url).toBe('http://cam/capture')
     expect(o.status === 'ok' && o.value.softLimitMm).toBe(490.75)
     expect(o.status === 'ok' && o.value.marks).toEqual(PROXIES_AT_HOME_MARKS)
+    expect(o.status === 'ok' && o.value.sheet).toEqual({ width: 297, height: 210 })
     expect(o.status === 'ok' && o.value.lastAffine).toBeNull()
   })
 
@@ -39,7 +40,7 @@ describe('loadRig', () => {
     expect(o.status === 'ok' && o.value.marks).toEqual({ square: { x: 1, y: 2 }, cornerX: { x: 3, y: 2 }, cornerY: { x: 1, y: 4 } })
   })
 
-  it('refuses a newer schema', () => expect(loadRig({ schemaVersion: 2 }).status).toBe('unsupported'))
+  it('refuses a newer schema', () => expect(loadRig({ schemaVersion: 3 }).status).toBe('unsupported'))
 })
 
 describe('useCameraRig', () => {

@@ -19,6 +19,8 @@ export interface RigIO {
   detect(f: Frame, mmPerPx: number): Detected[]
   diff(a: Frame, b: Frame): number
   sleep(ms: number): Promise<void>
+  /** A mark was centered and measured (machine mm) - for the live head map. */
+  found?(mark: Seen): void
 }
 
 /** Mean luma difference below which two consecutive frames count as still. */
@@ -36,6 +38,9 @@ const SEARCH_ROWS = 4
 const ROW_FEED_MM = 5
 /** A square-to-corner distance names the corner when within this fraction of the layout's. */
 const DIST_TOL = 0.02
+/** A corner this far off the layout's distance means the layout is not this print's: stop instead of
+ *  hunting on at the other distance. */
+const NEAR_TOL = 0.08
 /** Probe move for the camera calibration. */
 const PROBE_MM = 3
 /** Plausible camera scale. Outside it the search step is metres or microns - a failed calibration. */
@@ -130,7 +135,7 @@ function nearest(marks: Detected[], f: Frame, kind: Detected['kind'] | null): De
     .reduce<Detected | null>((best, m) => (best && r(best) <= r(m) ? best : m), null)
 }
 
-interface Seen {
+export interface Seen {
   kind: Detected['kind']
   at: Pt
 }
@@ -188,7 +193,10 @@ export async function measureMark(
           : `Lost the ${kind} mark while centering it.`,
       )
     }
-    if (dist(p, q) <= CONVERGE_MM) return q
+    if (dist(p, q) <= CONVERGE_MM) {
+      io.found?.({ kind, at: q })
+      return q
+    }
     p = q
   }
   throw new RegistrationError(`The ${kind} mark does not center under the camera - calibrate the camera again.`)
@@ -315,9 +323,15 @@ async function search(
       continue
     }
     const got = dist(m1, m2)
-    const fits = (k: Corner) => Math.abs(got / pageDist[k] - 1) <= DIST_TOL
-    const which: Corner | null = fits('cornerX') ? 'cornerX' : fits('cornerY') ? 'cornerY' : null
+    const off = (k: Corner) => Math.abs(got / pageDist[k] - 1)
+    const near: Corner = off('cornerX') <= off('cornerY') ? 'cornerX' : 'cornerY'
+    const which: Corner | null = off(near) <= DIST_TOL ? near : null
     if (!which) {
+      if (off(near) <= NEAR_TOL) {
+        throw new RegistrationError(
+          `The ${markNames(page)[near]} lies ${got.toFixed(1)} mm from the square; the mark layout says ${pageDist[near].toFixed(1)} mm. Check the mark inset, and that the print is at 100 % scale.`,
+        )
+      }
       onStatus(`A ${partner} at ${fmt(m2)} is ${got.toFixed(1)} mm away - not the layout's ${pageDist.cornerX.toFixed(1)} or ${pageDist.cornerY.toFixed(1)} mm, skipped.`)
       offDist ??= got
       continue
@@ -351,11 +365,15 @@ async function search(
   const turn = Math.sign(kp.x * mp.y - kp.y * mp.x) || 1
   const mirrored = rig.lastAffine ? affineStrain(rig.lastAffine).mirrored : true
   const sign = mirrored ? -turn : turn
-  const target = add(square, normal, sign * reach)
-  const m3 = await tryMeasure(io, cam, target, 'corner', lim)
-  if (typeof m3 !== 'string') {
-    onStatus(`${cap(markNames(page)[missing])} at ${fmt(m3)}.`)
-    return which === 'cornerX' ? { square, cornerX: corner, cornerY: m3 } : { square, cornerX: m3, cornerY: corner }
+  const reaches = [reach]
+  let m3: Pt | string = ''
+  for (const r of reaches) {
+    m3 = await tryMeasure(io, cam, add(square, normal, sign * r), 'corner', lim)
+    if (typeof m3 !== 'string') {
+      onStatus(`${cap(markNames(page)[missing])} at ${fmt(m3)}.`)
+      return which === 'cornerX' ? { square, cornerX: corner, cornerY: m3 } : { square, cornerX: m3, cornerY: corner }
+    }
+    onStatus(m3)
   }
   throw new RegistrationError(
     `${cap(markNames(page)[missing])}: ${m3} Place the sheet so all three marks lie inside the reachable area.`,

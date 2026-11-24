@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest'
-import { PROXIES_AT_HOME_MARKS as L, applyAffine, mirrorLayout, moveLayout, type MarkLayout } from '../../core/registration'
+import { PROXIES_AT_HOME_MARKS as L, applyAffine, PROXIES_AT_HOME_SHEET, insetLayout, rotateLayout, squareToCorner, type MarkLayout } from '../../core/registration'
 import { initWasmForTests } from '../../core/wasm/nodeTestInit'
 import type { Affine, CamMatrix, Detected, Pt } from '../../core/wasm/registration'
 import type { CamCal, CameraRig } from '../../store/cameraRig'
@@ -194,12 +194,26 @@ describe('registerSheet', () => {
 
   it('finds a sheet whose corners lie left of and above the square', async () => {
     // A4 template flipped both ways: the front row holds only the upper corner, its square lies along the feed.
-    const flipped = moveLayout(mirrorLayout(mirrorLayout(L, 'x'), 'y'), { x: 297 - L.square.x, y: 210 - L.square.y })
+    const flipped = squareToCorner(L, 'bottom-right', { width: 297, height: 210 })
     const m = placed(0.6, true, { x: 200, y: 300 }, 1, flipped.square)
     const { truth, marks } = sheet(m, flipped)
     const { io } = fakeIO(world(marks))
     const r = await registerSheet(io, rig({ marks: flipped }), () => {})
     expectRegistered(r, truth, flipped)
+  })
+
+  it('finds a sheet printed the other way up: square top-right, the short side along the top', async () => {
+    const turned = rotateLayout(L, 210)
+    const m = placed(0.6, true, { x: 8, y: 250 }, 1, turned.square)
+    const { truth, marks } = sheet(m, turned)
+    const { io } = fakeIO(world(marks))
+    expectRegistered(await registerSheet(io, rig({ marks: turned }), () => {}), truth, turned)
+  })
+
+  it('stops on a print whose marks sit a few mm off the layout (wrong mark inset)', async () => {
+    const real = insetLayout(PROXIES_AT_HOME_SHEET, 5, 'top-left')
+    const { marks } = sheet(placed(0.6, true, { x: 8, y: 30 }), real)
+    await expect(registerSheet(fakeIO(world(marks)).io, rig(), () => {})).rejects.toThrow(/mark inset/)
   })
 
   it('uses the last positions first', async () => {

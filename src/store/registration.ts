@@ -9,7 +9,7 @@ import { create } from 'zustand'
 import { withOffset } from '../core/registration'
 import { affineStrain, findMarks, frameDiff, type Affine, type Pt } from '../core/wasm/registration'
 import { captureFrame } from '../output/camera/capture'
-import { calibrateCamera, findSquare, plausibleCam, registerSheet, RegistrationError, settle, type RigIO } from '../output/camera/register'
+import { calibrateCamera, findSquare, plausibleCam, registerSheet, RegistrationError, settle, type RigIO, type Seen } from '../output/camera/register'
 import { HeadHold } from '../output/hpgl/headHold'
 import type { WebSerialTransport } from '../output/serial/transport'
 import { useCameraRig, type CameraRig } from './cameraRig'
@@ -26,6 +26,10 @@ interface RegistrationStore {
   message: string | null
   /** Steps of the running / last action, oldest first. */
   log: string[]
+  /** Where the head was last sent (machine mm); null = at the origin. The cutter reports nothing. */
+  head: Pt | null
+  /** Marks measured by the running / last action. */
+  found: Seen[]
   /** Series drift; cutting asks for confirmation first. */
   warning: string | null
   /** Object URL of the latest frame (the previous one is revoked). */
@@ -85,6 +89,7 @@ function linkGone(link: WebSerialTransport) {
   hold?.stop()
   hold = null
   holdLink = null
+  useRegistration.setState({ head: null })
   if (useRegistration.getState().phase !== 'busy') return
   const gone = new Error('The plotter disconnected.')
   abort.abort(gone)
@@ -101,6 +106,7 @@ export async function goHome(): Promise<void> {
     hold?.stop()
   }
   useSerial.getState().setHeadAway(false)
+  useRegistration.setState({ head: null })
 }
 
 function showFrame(blob: Blob) {
@@ -118,6 +124,7 @@ function rigIO(signal: AbortSignal): RigIO {
       useRegistration.setState({ message: `Moving to (${p.x.toFixed(1)}, ${p.y.toFixed(1)})…` })
       await headHold().moveTo(p)
       signal.throwIfAborted() // cancel's home() superseded this move
+      useRegistration.setState({ head: p })
       useSerial.getState().setHeadAway(true)
     },
     capture: async () => {
@@ -125,6 +132,7 @@ function rigIO(signal: AbortSignal): RigIO {
       showFrame(f.blob)
       return f
     },
+    found: (m) => useRegistration.setState((s) => ({ found: [...s.found, m] })),
     detect: (f, mmPerPx) => findMarks(f.rgba, f.width, f.height, mmPerPx),
     diff: (a, b) => frameDiff(a.rgba, b.rgba),
     sleep: (ms) =>
@@ -148,7 +156,7 @@ export const useRegistration = create<RegistrationStore>((set, get) => {
   const act = async (work: (io: RigIO) => Promise<string | null>) => {
     if (get().phase === 'busy' || usePlotSession.getState().phase !== 'idle') return
     const ctl = (abort = new AbortController())
-    set({ phase: 'busy', message: null, log: [] })
+    set({ phase: 'busy', message: null, log: [], found: [] })
     try {
       const message = await work(rigIO(ctl.signal))
       set({ phase: get().affine ? 'ready' : 'idle', message })
@@ -168,15 +176,7 @@ export const useRegistration = create<RegistrationStore>((set, get) => {
     return `Camera calibrated: ${s.toFixed(3)} mm/px, view ${(cam.w * s).toFixed(0)} x ${(cam.h * s).toFixed(0)} mm.`
   }
 
-  return {
-    phase: 'idle',
-    affine: null,
-    message: null,
-    log: [],
-    warning: null,
-    frameUrl: null,
-
-    measure: () =>
+  const measure = () =>
       act(async (io) => {
         set({ affine: null, warning: null })
         try {
@@ -192,7 +192,19 @@ export const useRegistration = create<RegistrationStore>((set, get) => {
           // The operator swaps camera for knife at the origin; home also unblocks plotting.
           await goHome()
         }
-      }),
+      })
+
+  return {
+    phase: 'idle',
+    affine: null,
+    message: null,
+    log: [],
+    head: null,
+    found: [],
+    warning: null,
+    frameUrl: null,
+
+    measure,
 
     calibrate: () => act(calibrateHere),
 
