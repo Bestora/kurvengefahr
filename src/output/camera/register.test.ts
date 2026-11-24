@@ -113,6 +113,7 @@ const rig = (over: Partial<CameraRig> = {}): CameraRig => ({
   cam,
   knifeOffset: { x: 0, y: 0 },
   marks: L,
+  sheet: PROXIES_AT_HOME_SHEET,
   lastMarks: null,
   lastAffine: null,
   ...over,
