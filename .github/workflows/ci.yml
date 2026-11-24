@@ -35,6 +35,8 @@ jobs:
 
       - name: Install wasm-pack
         uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: v0.15.1 # unpinned, the action fell back to 0.9.1, whose wasm-opt can't parse current wasm
 
       - run: npm ci
       - run: npm run build # prebuild → build:wasm, then tsc + vite build
