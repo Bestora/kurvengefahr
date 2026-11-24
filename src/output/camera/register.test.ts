@@ -217,6 +217,17 @@ describe('registerSheet', () => {
     await expect(registerSheet(fakeIO(world(marks)).io, rig(), () => {})).rejects.toThrow(/mark inset/)
   })
 
+  it('first sheet, square near the soft limit, print 2.2 % small: searches the layout side first', async () => {
+    // A4 portrait, 5 mm inset, square bottom-left; face up, page x along the carriage (page right = -Y).
+    const portrait = { width: 210, height: 297 }
+    const P = insetLayout(portrait, 5, 'bottom-left')
+    const { truth, marks } = sheet(placed(180, true, { x: 2.3, y: 303.4 }, 0.978, P.square), P)
+    // The operator jogged onto the square, as in the field.
+    const { io, moves } = fakeIO(world(marks, { head: truth.square }))
+    expectRegistered(await registerSheet(io, rig({ marks: P, sheet: portrait }), () => {}), truth, P)
+    expect(moves.every((m) => m.y < LIMIT - 1)).toBe(true)
+  })
+
   it('uses the last positions first', async () => {
     const { truth, marks } = SKEWED
     const lastMarks = {

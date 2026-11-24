@@ -37,7 +37,7 @@ const SEARCH_ROWS = 4
 /** Feed spacing of the search rows - finer than the view so a mark at a row's edge is not missed. */
 const ROW_FEED_MM = 5
 /** A square-to-corner distance names the corner when within this fraction of the layout's. */
-const DIST_TOL = 0.02
+const DIST_TOL = 0.04
 /** A corner this far off the layout's distance means the layout is not this print's: stop instead of
  *  hunting on at the other distance. */
 const NEAR_TOL = 0.08
@@ -302,7 +302,7 @@ async function search(
   let offDist: number | null = null
   // Guesses: from the last accepted sheet's scale and rotation first (prints are often a few % small,
   // which puts a corner 5 mm off the layout distance), then the layout distance along the carriage,
-  // then along the feed. Unreachable guesses cost no moves.
+  // then along the feed. Guesses in reach go first: one past a limit is only looked at from the edge.
   const guesses: Pt[] = []
   if (rig.lastAffine) {
     const [a, b, , d, e] = rig.lastAffine
@@ -312,9 +312,14 @@ async function search(
       guesses.push(add(m1, lin(first.kind === 'square' ? v : { x: -v.x, y: -v.y }), 1))
     }
   }
+  // Then the layout's side: a face-up sheet with its x along the carriage puts the page's right on -Y (the
+  // head moves right; measured on the SK-720T, 2026-11-24).
+  const vX = sub(page.cornerX, page.square)
+  guesses.push(add(m1, onAxes(first.kind === 'square' ? -vX.x : vX.x, 0)))
   for (const along of [onAxes(1, 0), onAxes(0, 1)])
     for (const d of [pageDist.cornerX, -pageDist.cornerX, pageDist.cornerY, -pageDist.cornerY])
       guesses.push(add(m1, along, d))
+  guesses.sort((p, q) => Number(!reachable(p, lim)) - Number(!reachable(q, lim)))
   for (const g of guesses) {
     onStatus(`Looking for the ${partner} near ${fmt(g)}…`)
     const m2 = await tryMeasure(io, cam, g, partner, lim)

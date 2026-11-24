@@ -107,7 +107,8 @@ export const PROXIES_AT_HOME_MARKS: MarkLayout = insetLayout(PROXIES_AT_HOME_SHE
 
 export const TEST_CUT_SIDE_MM = 7.99;
 
-const SCALE_MIN = 0.98;
+// Prints come out shrunk (printer "fit to page": 2.2 % seen) far more often than enlarged.
+const SCALE_MIN = 0.96;
 const SCALE_MAX = 1.02;
 const MAX_SHEAR_DEG = 0.5;
 const DRIFT_REF_MM = 300;
@@ -138,7 +139,7 @@ export function checkRegistration(m: Affine, prev: Affine | null): Verdict {
   ] as const) {
     if (v < SCALE_MIN || v > SCALE_MAX)
       return {
-        error: `${name} ${v.toFixed(3)} is outside ${SCALE_MIN}-${SCALE_MAX} - wrong mark or the sheet moved.`,
+        error: `${name} ${v.toFixed(3)} is outside ${SCALE_MIN}-${SCALE_MAX} - check the mark inset, or a wrong mark or the sheet moved.`,
         warning: null,
       };
   }

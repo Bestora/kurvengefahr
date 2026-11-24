@@ -49,8 +49,11 @@ describe("registration core", () => {
       error: null,
       warning: null,
     }));
-  it("rejects scale outside 0.98..1.02", () =>
-    expect(checkRegistration(scaled(1.03, 1), null).error).toMatch(/scale/i));
+  it("rejects scale outside 0.96..1.02", () => {
+    expect(checkRegistration(scaled(1.03, 1), null).error).toMatch(/scale/i);
+    expect(checkRegistration(scaled(0.95, 1), null).error).toMatch(/scale/i);
+    expect(checkRegistration(scaled(0.978, 1), null).error).toBeNull();
+  });
   it("rejects shear above 0.5°", () =>
     expect(checkRegistration(sheared(0.6), null).error).toMatch(/shear/i));
   it("rejects a mirror flip against the previous sheet", () =>
