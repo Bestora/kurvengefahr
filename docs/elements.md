@@ -63,8 +63,10 @@ on canvas bakes into the pattern's box, so it regenerates crisp at the new size.
 
 ## Images (raster tracing)
 
-Import a photo or drawing (file import, or just paste an image) and restyle it as strokes. One
-image, ten renderings, switchable live:
+Import a photo or drawing (file import, or just paste an image) and restyle it as strokes. A PDF
+imports its first page as an image at the page's real size, placed at the page's top-left corner,
+so a print sheet lands on top of its cut template. Like any image it plots, so delete it before
+the real job. One image, ten renderings, switchable live:
 
 - **Outlines** - faithful contour tracing of dark regions, with threshold, smoothing, and
   despeckle controls.

@@ -37,7 +37,7 @@ popular models.
   [tutorial](docs/logo-tutorial.md) and a [full language reference](docs/logo-reference.md).
 - **SVG and DXF import** - files become native, editable paths at real-world size, colors mapped to
   pens; occluded fill regions are clipped away so they don't plot.
-- **Raster tracing** - restyle a photo as strokes: outlines, centerlines, topographic levels,
+- **Raster tracing** - restyle a photo (or a PDF page) as strokes: outlines, centerlines, topographic levels,
   hatching, scanlines, a single TSP tour, flow fields, or spirals, with live preview.
 - **3D models** - import an STL, orbit it in an interactive preview, and it renders as a
   plottable wireframe of the model's feature edges: silhouettes, creases at a tunable angle, and

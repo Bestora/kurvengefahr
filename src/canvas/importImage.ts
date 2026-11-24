@@ -1,5 +1,5 @@
 // Content-import actions: pick a file and route it — SVG/DXF to their import dialogs, STL to a
-// 3D model (wireframe) element, anything else to a raster image element (stored downsampled, sized ~100 mm
+// 3D model (wireframe) element, PDF (first page) to a raster element at true size, anything else to a raster image element (stored downsampled, sized ~100 mm
 // on its longest side). Entry points are a file picker (the toolbar "Import" button + menu/palette
 // "Import…") and a clipboard paste; all funnel through `importFile`. Unlike the drawing tools
 // these aren't canvas modes; they're one-shot actions, not `Tool`s. New raster/model elements
@@ -10,12 +10,14 @@ import { importImage, importModel } from '../store/images'
 import { defaultRasterParams } from '../elements/raster'
 import { defaultModelParams } from '../elements/model'
 import { pickFile } from '../output/download'
+import { renderPdfPage } from './importPdf'
 import { useSvgImport } from '../store/svgImport'
 import { useDxfImport } from '../store/dxfImport'
 
 const isSvg = (f: File) => f.type === 'image/svg+xml' || /\.svg$/i.test(f.name)
 const isDxf = (f: File) => /\.dxf$/i.test(f.name)
 const isStl = (f: File) => f.type === 'model/stl' || /\.stl$/i.test(f.name)
+const isPdf = (f: File) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name)
 
 /** Route a picked content file to the right importer: SVG → the SVG import dialog, anything else →
  *  a raster image element. (So dropping an SVG on the image button silently does the right thing.) */
@@ -34,12 +36,16 @@ export async function importFile(file: File): Promise<void> {
     await addModelElement(file)
     return
   }
+  if (isPdf(file)) {
+    await addPdfElement(file)
+    return
+  }
   await addImageElement(file)
 }
 
 /** Menu "Import…": pick any supported content file (vector, raster, or 3D model) and route it. */
 export async function importContentFile(): Promise<void> {
-  const file = await pickFile('image/svg+xml,.svg,.dxf,.stl,image/*')
+  const file = await pickFile('image/svg+xml,.svg,.dxf,.stl,.pdf,application/pdf,image/*')
   if (file) await importFile(file)
 }
 
@@ -51,6 +57,18 @@ export async function addModelElement(source: File | Blob): Promise<string | nul
   } catch {
     toast.error('Could not import that model (64 MB max, binary or ASCII STL).')
     return null
+  }
+}
+
+/** A PDF's first page as a raster element at its true size, on the page origin. */
+async function addPdfElement(file: File): Promise<void> {
+  try {
+    const { png, widthMm, heightMm, pages } = await renderPdfPage(file)
+    const { imageId, width, height } = await importImage(png)
+    useDoc.getState().addElement('raster', defaultRasterParams(imageId, width, height, widthMm, heightMm), { x: 0, y: 0 })
+    if (pages > 1) toast.info(`Imported page 1 of ${pages}.`)
+  } catch {
+    toast.error('Could not import that PDF.')
   }
 }
 
